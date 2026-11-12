@@ -1,0 +1,1331 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full w-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1e3a8a">
+    <meta name="application-name" content="UbicaTec">
+    <meta name="description" content="UbicaTec: mapa interactivo del Instituto Tecnológico de Tlaxiaco con rutas entre edificios.">
+    <title>UbicaTec</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Si el CDN no carga (sin internet) la página no se rompe, solo pierde estilos.
+        if (window.tailwind) {
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                50: '#eef2ff',
+                                100: '#e0e7ff',
+                                200: '#c7d2fe',
+                                400: '#60a5fa',
+                                500: '#1e3a8a', // TecNM Blue
+                                600: '#1d4ed8',
+                                700: '#1e40af',
+                            }
+                        }
+                    }
+                }
+            };
+        }
+    </script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <!-- QRious Library for QR Generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+
+    <style>
+        :root { --card-w: min(22rem, calc(100vw - 4.5rem)); }
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            touch-action: manipulation;
+        }
+        .canvas-container {
+            width: 100%;
+            height: 100%;
+            background: #eef2f7;
+            position: relative;
+            overflow: hidden;
+            cursor: grab;
+            touch-action: none; /* evita que el pellizco haga zoom a toda la página */
+        }
+        .canvas-container:active { cursor: grabbing; }
+        canvas { display: block; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { scrollbar-width: none; }
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: none; }
+        }
+        .animate-fade-in { animation: fade-in .25s ease-out; }
+
+        /* ---- Pestaña desplegable de ubicación (lado izquierdo) ---- */
+        .side-panel {
+            position: absolute; left: 0; top: 5.4rem; z-index: 35;
+            display: flex; align-items: flex-start;
+            transform: translateX(calc(-1 * var(--card-w)));
+            transition: transform .28s cubic-bezier(.4, 0, .2, 1);
+            pointer-events: none;
+        }
+        .side-panel.open { transform: none; }
+        .side-card {
+            width: var(--card-w);
+            display: flex; flex-direction: column; overflow: hidden;
+            max-height: calc(100vh - 6.6rem);
+            max-height: calc(100dvh - 6.6rem);
+            background: rgba(255, 255, 255, .96);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(226, 232, 240, .9); border-left: 0;
+            border-radius: 0 1.25rem 1.25rem 0;
+            box-shadow: 0 20px 25px -5px rgba(15, 23, 42, .22);
+            pointer-events: auto;
+        }
+        .side-panel:not(.open) .side-card { visibility: hidden; transition: visibility 0s .28s; }
+        .side-head { flex: none; padding: .95rem .9rem .85rem; border-bottom: 1px solid #eef2f7; }
+        .side-body { flex: 1; min-height: 0; overflow-y: auto; padding: .8rem .9rem .95rem; overscroll-behavior: contain; }
+        .side-tab {
+            pointer-events: auto;
+            width: 2.75rem; padding: .6rem 0; margin-left: -1px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45rem;
+            background: rgba(255, 255, 255, .96);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(226, 232, 240, .9); border-left: 0;
+            border-radius: 0 1rem 1rem 0;
+            box-shadow: 0 10px 15px -3px rgba(15, 23, 42, .25);
+            color: #1d4ed8; cursor: pointer;
+        }
+        .side-tab:active { transform: scale(.96); }
+        .side-tab-badge {
+            min-width: 1.5rem; height: 1.5rem; padding: 0 .25rem;
+            display: inline-flex; align-items: center; justify-content: center;
+            border-radius: .5rem; background: #10b981; color: #fff;
+            font-size: .72rem; font-weight: 900;
+        }
+        #side-chevron { font-size: .7rem; transition: transform .28s; }
+        .side-panel.open #side-chevron { transform: rotate(180deg); }
+        .side-label {
+            display: flex; align-items: center; gap: .4rem; margin-bottom: .3rem;
+            font-size: .62rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #94a3b8;
+        }
+        .side-dot { width: .6rem; height: .6rem; border-radius: 9999px; display: inline-block; }
+        .side-select {
+            width: 100%; padding: .55rem .6rem; cursor: pointer; outline: none;
+            font-size: .78rem; font-weight: 700; color: #1e293b;
+            background: #fff; border: 1px solid #e2e8f0; border-radius: .75rem;
+            text-overflow: ellipsis;
+        }
+        .side-select:focus { box-shadow: 0 0 0 2px #1d4ed8; }
+    </style>
+</head>
+<body class="h-full w-full overflow-hidden bg-slate-900 text-slate-800 flex flex-col antialiased select-none">
+
+    <!-- Top Navigation Header -->
+    <header class="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
+        <div class="pointer-events-auto bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-xl border border-slate-200/80 flex items-center gap-3 max-w-[80vw]">
+            <div class="w-10 h-10 rounded-xl bg-brand-600 text-white flex items-center justify-center shadow-md shadow-brand-500/30 shrink-0">
+                <i class="fa-solid fa-compass text-lg"></i>
+            </div>
+            <div class="min-w-0">
+                <h1 class="text-sm sm:text-base font-black leading-tight text-slate-900 truncate">UbicaTec</h1>
+                <p id="current-location-tag" onclick="toggleSidePanel()" title="Cambiar mi ubicación" class="text-[11px] text-brand-600 font-bold flex items-center gap-1 truncate cursor-pointer">
+                    <i class="fa-solid fa-location-dot text-[10px]"></i>
+                    <span id="origin-badge-text">A - Pórtico y Caseta de Vigilancia</span>
+                </p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 pointer-events-auto shrink-0">
+            <button onclick="resetMapView()" title="Restablecer vista del croquis" aria-label="Restablecer vista" class="w-10 h-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 flex items-center justify-center text-slate-700 hover:text-brand-600 active:scale-95 transition-all">
+                <i class="fa-solid fa-crosshairs text-base"></i>
+            </button>
+            <button onclick="openQrModal()" title="Generar Tótems QR para imprimir" aria-label="Generar QR" class="w-10 h-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-200/80 flex items-center justify-center text-slate-700 hover:text-brand-600 active:scale-95 transition-all">
+                <i class="fa-solid fa-qrcode text-base"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Map Visualizer Canvas Container -->
+    <main class="relative flex-1 w-full h-full bg-slate-800">
+        <div id="canvas-container" class="canvas-container">
+            <canvas id="croquis-canvas"></canvas>
+        </div>
+
+        <!-- Floating Notification Banner -->
+        <div id="toast" class="absolute top-20 left-1/2 -translate-x-1/2 z-40 bg-slate-900/90 text-white text-xs font-medium px-4 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md transition-all duration-300 opacity-0 pointer-events-none flex items-center gap-2 border border-slate-700 max-w-[90vw]">
+            <i id="toast-icon" class="fa-solid fa-circle-info text-brand-400"></i>
+            <span id="toast-msg">Bienvenido a UbicaTec</span>
+        </div>
+
+        <!-- Zoom Floating Controls -->
+        <div class="absolute right-3 top-1/2 -translate-y-1/2 z-20 flex flex-col gap-1.5">
+            <button onclick="zoomMap(1.25)" aria-label="Acercar" class="w-10 h-10 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200/80 flex items-center justify-center text-slate-700 hover:bg-brand-50 active:scale-95 transition">
+                <i class="fa-solid fa-plus"></i>
+            </button>
+            <button onclick="zoomMap(0.8)" aria-label="Alejar" class="w-10 h-10 bg-white/95 backdrop-blur-md rounded-xl shadow-lg border border-slate-200/80 flex items-center justify-center text-slate-700 hover:bg-brand-50 active:scale-95 transition">
+                <i class="fa-solid fa-minus"></i>
+            </button>
+        </div>
+    </main>
+
+    <!-- Pestaña desplegable (lado izquierdo): ubicación, ruta, filtros y lista de edificios -->
+    <aside id="side-panel" class="side-panel" aria-label="Ubicación, ruta y edificios">
+        <div id="side-card" class="side-card">
+            <div class="side-head">
+                <div class="flex items-center gap-2 mb-3">
+                    <i class="fa-solid fa-route text-brand-600 text-sm"></i>
+                    <h2 class="text-xs font-black text-slate-800">Planea tu recorrido</h2>
+                </div>
+                <div class="mb-3">
+                    <label for="origin-select" class="side-label"><span class="side-dot" style="background:#10b981"></span>Tu ubicación</label>
+                    <select id="origin-select" onchange="changeOriginFromSelect(this.value)" class="side-select"></select>
+                </div>
+                <div>
+                    <label for="destination-select" class="side-label"><span class="side-dot" style="background:#dc2626"></span>Ir a edificio</label>
+                    <select id="destination-select" onchange="selectDestination(this.value)" class="side-select">
+                        <option value="" disabled selected>Selecciona destino...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="side-body space-y-3">
+                <!-- Route Summary Badge -->
+                <div id="route-summary" class="hidden bg-brand-50 border border-brand-200 rounded-2xl animate-fade-in">
+                    <div class="flex items-center justify-between gap-2 px-3 py-2.5">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <div class="w-9 h-9 rounded-xl bg-brand-600 text-white flex items-center justify-center text-sm shadow-md shadow-brand-500/30 shrink-0">
+                                <i class="fa-solid fa-person-walking"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-baseline gap-x-2">
+                                    <span id="route-distance" class="text-base font-black text-brand-700 whitespace-nowrap">0 m</span>
+                                    <span id="route-time" class="text-xs font-bold text-slate-600 whitespace-nowrap">0 min</span>
+                                </div>
+                                <p class="text-[10px] text-brand-600 font-semibold leading-tight">Por los andadores del campus</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center gap-1.5 shrink-0">
+                            <button onclick="fitRoute()" title="Ver ruta completa" aria-label="Ver ruta completa" class="w-8 h-8 rounded-xl bg-white border border-brand-200 text-brand-600 flex items-center justify-center hover:bg-brand-50 active:scale-95 transition shadow-sm">
+                                <i class="fa-solid fa-expand text-xs"></i>
+                            </button>
+                            <button onclick="speakDirections()" title="Escuchar indicaciones" aria-label="Escuchar indicaciones" class="w-8 h-8 rounded-xl bg-white border border-brand-200 text-brand-600 flex items-center justify-center hover:bg-brand-50 active:scale-95 transition shadow-sm">
+                                <i class="fa-solid fa-volume-high text-xs"></i>
+                            </button>
+                            <button onclick="clearCurrentRoute()" title="Cancelar ruta" aria-label="Cancelar ruta" class="w-8 h-8 rounded-xl bg-white border border-rose-200 text-rose-500 flex items-center justify-center hover:bg-rose-50 active:scale-95 transition shadow-sm">
+                                <i class="fa-solid fa-xmark text-xs"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <details class="px-3 pb-2.5">
+                        <summary class="text-[11px] font-bold text-brand-600 cursor-pointer">Ver indicaciones paso a paso</summary>
+                        <ol id="route-steps" class="list-decimal pl-5 mt-1.5 space-y-1 text-[11px] text-slate-600"></ol>
+                    </details>
+                </div>
+
+                <!-- Category Filter Pills -->
+                <div class="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+                    <button onclick="filterCategory('all', event)" class="cat-pill active px-3 py-1.5 rounded-xl font-bold whitespace-nowrap bg-brand-600 text-white shadow-sm transition">
+                        Todos
+                    </button>
+                    <button onclick="filterCategory('academicos', event)" class="cat-pill px-3 py-1.5 rounded-xl font-bold whitespace-nowrap bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                        <i class="fa-solid fa-graduation-cap mr-1"></i> Académicos
+                    </button>
+                    <button onclick="filterCategory('laboratorios', event)" class="cat-pill px-3 py-1.5 rounded-xl font-bold whitespace-nowrap bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                        <i class="fa-solid fa-flask mr-1"></i> Labs y Cómputo
+                    </button>
+                    <button onclick="filterCategory('administrativos', event)" class="cat-pill px-3 py-1.5 rounded-xl font-bold whitespace-nowrap bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                        <i class="fa-solid fa-briefcase mr-1"></i> Admin / Servicios
+                    </button>
+                    <button onclick="filterCategory('deporte_cafeteria', event)" class="cat-pill px-3 py-1.5 rounded-xl font-bold whitespace-nowrap bg-slate-100 text-slate-600 hover:bg-slate-200 transition">
+                        <i class="fa-solid fa-futbol mr-1"></i> Deportes / Cafetería
+                    </button>
+                </div>
+
+                <!-- Quick Building List -->
+                <div id="quick-destinations" class="space-y-1.5"></div>
+            </div>
+        </div>
+        <button id="side-tab" class="side-tab" onclick="toggleSidePanel()" aria-expanded="false" aria-controls="side-card" title="Mostrar u ocultar el panel de ubicación y edificios" aria-label="Mostrar u ocultar el panel de ubicación y edificios">
+            <i class="fa-solid fa-location-dot"></i>
+            <span id="tab-origin" class="side-tab-badge">A</span>
+            <i id="side-chevron" class="fa-solid fa-chevron-right"></i>
+        </button>
+    </aside>
+
+    <!-- Modal for Generating Printable School QR Totems -->
+    <div id="qr-modal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl max-w-md w-full max-h-[95vh] overflow-y-auto p-6 shadow-2xl space-y-4 border border-slate-100">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-brand-100 text-brand-600 flex items-center justify-center">
+                        <i class="fa-solid fa-print text-sm"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-black text-slate-900 text-sm sm:text-base">Generador de Tótem QR</h3>
+                        <p class="text-[10px] text-slate-400">UbicaTec · TecNM Instituto Tecnológico de Tlaxiaco</p>
+                    </div>
+                </div>
+                <button onclick="closeQrModal()" aria-label="Cerrar" class="w-8 h-8 rounded-full bg-slate-100 text-slate-400 hover:text-slate-700 flex items-center justify-center transition">
+                    <i class="fa-solid fa-xmark text-sm"></i>
+                </button>
+            </div>
+
+            <p class="text-xs text-slate-500 leading-relaxed">
+                Selecciona la ubicación donde colocarás la lona o letrero QR. Al escanearlo, la web ubicará automáticamente al alumno en ese edificio.
+            </p>
+
+            <div id="qr-warning" class="hidden text-[11px] leading-relaxed bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-2.5"></div>
+
+            <div class="space-y-1">
+                <label class="text-xs font-bold text-slate-700">Edificio / Tótem de Origen:</label>
+                <select id="modal-qr-point" onchange="generateQrPreview()" class="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 font-semibold text-slate-800 focus:ring-2 focus:ring-brand-500 focus:outline-none"></select>
+            </div>
+
+            <div class="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 flex flex-col items-center justify-center gap-3">
+                <canvas id="qr-canvas" class="bg-white p-2 rounded-xl shadow-sm"></canvas>
+                <div class="text-center">
+                    <p id="qr-label-title" class="font-extrabold text-sm text-slate-800">Edificio A - Pórtico</p>
+                    <p id="qr-preview-url" class="text-[10px] text-slate-400 break-all max-w-[280px]">https://...</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2 pt-1">
+                <button onclick="downloadQrImage()" class="flex-1 bg-brand-600 hover:bg-brand-700 active:scale-95 text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 shadow-md shadow-brand-500/20 transition">
+                    <i class="fa-solid fa-download"></i> Descargar tótem
+                </button>
+                <button onclick="copyQrUrl()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold py-2.5 px-3.5 rounded-xl flex items-center justify-center gap-1.5 transition">
+                    <i class="fa-solid fa-copy"></i> Copiar link
+                </button>
+            </div>
+            <button onclick="printAllQrSheet()" class="w-full bg-slate-800 hover:bg-slate-900 active:scale-95 text-white text-xs font-bold py-2.5 px-4 rounded-xl flex items-center justify-center gap-2 transition">
+                <i class="fa-solid fa-print"></i> Imprimir hoja con todos los QR
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /* ================================================================
+         *  CONFIGURACIÓN  (lo único que DEBES cambiar antes de imprimir QR)
+         * ================================================================ */
+        // URL pública donde publiques este archivo (GitHub Pages, Netlify, etc.).
+        // Los QR impresos apuntan aquí, así que usa una dirección estable.
+        const PUBLIC_URL = 'https://TU-USUARIO.github.io/campusnav/';
+
+        // Escala estimada: la cancha de fútbol (~100 m) mide ~200 px en el croquis.
+        // Si mides una distancia real, ajusta este valor (metros reales / píxeles).
+        const METROS_POR_PIXEL = 0.5;
+        const VELOCIDAD_M_MIN = 65;      // metros por minuto caminando
+        const MIN_SCALE = 0.25;
+        const MAX_SCALE = 4;
+        const DESKTOP_MIN_WIDTH = 768;   // a partir de aquí la pestaña izquierda inicia abierta
+
+        /* ================================================================
+         *  CROQUIS OFICIAL (vectorizado a partir del plano del Instituto)
+         *  Capas de color (césped, andadores, calles, techos, canchas), formas de
+         *  cada edificio y la red de andadores. Todo en las coordenadas del plano.
+         *  El edificio F no existe en el croquis oficial, por eso no aparece.
+         * ================================================================ */
+        const CROQUIS = {"layers":[["#94ae5f","M815 590l-2 -6 -1 -12 -2 -4 -32 1 -15 2 2 14 8 -1 1 2 9 0 4 6 5 -1 1 1 -1 3 10 -1 -4 -3 2 -2zM750 531l0 1 8 0 0 -1zM775 520l-2 9 -8 1 0 1 10 0 1 -1zM986 537l2 13 3 4 2 -1 4 1 3 -3 6 0 2 2 2 -1 3 3 12 25 8 1 2 -4 6 0 4 5 5 3 7 -2 5 1 6 -3 5 0 6 -4 19 -4 3 -2 3 0 35 -12 8 -1 9 -4 9 -1 3 -2 -2 -2 -4 1 -4 -1 -1 1 -35 0 -1 1 -41 1 -1 1 -11 -1 -4 -4 1 -1 -4 -1 -4 -6 -7 -22 0 -8 -2 -2 -4 -13 0 -4 -2 -3 -4 0 -4 2 10 40 -2 4zM585 450l-1 1 9 13 1 6 2 -16zM1023 446l8 33 2 0 -2 -12 -3 -7 -1 -11 -3 -1zM616 434l70 125 2 2 7 -1 2 2 4 32 7 1 3 3 41 75 3 -3 22 -5 6 -3 4 0 14 -5 17 -3 2 -2 5 -1 -2 -2 -1 -5 4 -2 6 0 2 5 8 0 3 -2 9 -1 27 -10 5 0 5 -2 8 1 5 -5 6 -2 8 1 3 -1 4 -4 11 0 11 -3 3 -3 9 -3 5 1 8 -4 4 1 4 -2 2 -3 4 -1 6 1 2 -1 -1 -1 2 -2 6 -2 4 -8 4 -2 -10 -20 -5 -1 -1 3 5 21 -4 3 -19 0 -31 3 -55 2 -3 -4 0 -6 -4 -17 -3 -23 -4 -15 -18 1 -1 1 1 3 -2 2 -22 1 -1 1 -3 -3 0 -3 -14 0 -1 1 1 10 1 2 6 3 1 4 0 8 -4 3 1 15 3 8 4 -1 2 -3 3 0 1 1 -3 2 4 0 4 2 3 -3 26 -1 3 5 1 5 -1 3 2 1 -1 6 3 1 -2 3 1 4 -3 3 -4 1 -24 1 -1 1 -1 -1 -8 1 -4 -1 1 10 -5 3 -8 0 -3 -3 0 -9 -10 2 -11 -2 -2 3 -1 7 -4 3 -23 1 -1 1 -14 -1 -4 -4 1 -2 -2 -1 -4 -9 -1 -28 5 -8 14 0 -1 -14 -1 -1 -22 1 -3 -3 -3 -34 2 -2 9 0 0 -1 -42 2 -2 -2 1 -4 -3 -3 -2 -19 1 -5 2 -2 14 1 1 -1 54 -2 1 -1 6 0 3 3 0 4 2 0 -2 -11 -72 3 -3 -5 0 -10 -1 -1 1 -3 -6 2 -18 0 -1 -1 -1 2 -6 0 -2 -2 -7 2 -4 -4 -1 -20 1 -5 3 -3 11 0 7 -2 9 1 7 -2 24 2 1 -2 13 0 4 8 2 20 -4 3 -8 1 -5 -1 -1 2 2 3 52 -2 1 -6 -2 -7 -4 -36 -9 1 0 4 -2 2 -1 -1 -1 1 -10 0 -3 -3 2 -3 7 -1 1 -2 -2 -1 -1 1 -40 1 -16 2 -65 2zM851 422l0 1 5 1 1 -2zM781 427l5 30 2 22 2 6 0 7 2 6 1 16 2 11 3 5 20 -1 1 -1 20 0 13 -2 28 0 1 -1 31 -1 1 -7 -5 -21 0 -5 -2 -4 2 -2 8 0 2 3 1 11 6 24 13 0 1 -1 16 0 1 1 1 -1 -1 -7 -21 0 -2 1 -1 -5 -4 0 -2 -2 -4 -11 0 -7 -3 -6 -1 -13 1 -4 4 -2 2 -4 40 -1 3 -3 2 1 9 -1 1 2 1 -1 16 0 2 2 1 8 3 5 -1 3 1 4 4 5 -1 2 3 3 -2 3 2 11 -4 6 -5 2 -5 -1 -15 2 3 13 2 2 1 -1 36 -1 11 -2 -5 -18 -2 -13 -2 -3 -7 -31 -2 -4 1 -1 -2 -2 -3 -18 -3 -7 1 -1 -2 -1 -38 2 -14 2 -57 2 -2 -2 -1 -3 1 -2 -2 -5 -12 0 -1 1 -17 0 -1 10 -8 -2 -3 1 -8 -3 -2 -3zM900 484l5 25 0 7 -4 4 -64 3 -8 -6 -2 -19 -2 -7 4 -2 1 -3 4 0 1 -2 20 1 1 -2 27 0 1 -1 14 0zM716 364l-8 0 2 4 0 16 2 18 -5 9 -7 4 20 -2 -2 -37zM744 339l1 4 -5 4 2 15 10 1 0 -11 -3 -5 0 -5 -2 -3 -2 1zM672 266l4 17 1 22 -2 6 15 1 3 -6 6 1 1 -1 21 0 1 -1 15 0 2 2 -1 1 5 1 3 -4 0 -9 2 -1 0 -4 2 -2 28 -1 2 2 0 8 2 4 0 5 2 1 1 4 0 8 2 9 -1 10 2 1 0 2 3 1 0 2 6 0 2 2 2 16 -1 2 2 1 -4 4 -28 1 -1 1 -1 -1 -3 1 -7 -1 -3 -3 -24 1 -1 9 3 18 1 24 2 2 7 0 -2 -18 1 -3 4 -3 1 -6 29 -1 1 -2 6 -1 15 2 3 -1 5 1 1 -2 13 0 1 1 24 -1 2 2 1 8 3 4 0 8 2 2 0 4 39 -2 1 -5 -2 -2 2 -2 15 -1 2 2 0 5 4 11 41 -1 1 -1 19 0 1 -1 38 -2 2 2 4 18 4 -1 0 -3 2 -2 6 0 -3 0 -2 -2 -1 -15 6 -3 2 -6 4 -4 14 -2 57 -1 8 25 7 8 2 0 6 6 0 3 4 2 -1 7 26 -1 6 6 4 13 0 13 -1 1 4 7 7 27 4 10 -1 2 1 10 -3 4 0 3 3 3 5 -2 6 0 4 -3 13 -1 5 -2 3 1 6 -3 7 -1 1 -2 2 1 20 -6 1 -2 3 1 3 -1 -1 -1 2 -2 5 -2 -2 -3 -8 -4 -7 -1 -3 -3 -5 0 -16 -8 -4 0 -2 -2 -6 -1 -30 -57 -5 -12 -68 -65 -4 -1 -20 1 -14 9 -4 4 -2 0 -16 10 -1 -1 -12 7 -23 8 -32 6 -20 -9 -4 0 -5 -3 -5 -1 -6 -4 -4 0 -16 -6 -1 -2 -9 -2 -3 -3 -10 -2 -6 -4 -4 0 -2 -2 -9 -2 -16 -8 -7 -1 -13 -7 -13 -3 -5 -3 -15 -5 -4 -4 1 -1 -3 -1 -3 -8 1 -4 -2 -1 -4 -9 -1 -9 -4 -9 0 -3 4 -2 -1 -3 -5 -1 -32 1 -1 -1 -35 0 -1 -1 -8 1 -5 -2 -4 -4 -11 -5 -2 -3 -7 -3 -6 0zM656 252l-14 -11 -6 -2 -6 -6 -12 -6 -18 -23 -3 -1 -63 16 -11 4 -5 0 -58 16 -16 3 -21 7 -10 1 -2 2 -16 3 -3 2 -5 0 -7 3 -22 4 -3 2 -32 7 -3 2 -8 1 -7 3 -17 3 -13 5 -2 -1 -23 7 -9 1 -7 3 -12 2 -7 3 -28 6 -7 3 -13 2 -7 3 -4 0 -7 3 -8 1 -20 6 -1 5 5 12 1 6 4 7 2 8 4 5 3 12 2 2 5 17 10 24 0 3 3 6 0 5 -3 3 -10 3 -4 3 -2 -1 -12 6 -7 1 -5 3 -4 0 -17 8 -29 9 0 114 4 -1 -1 -2 5 -3 9 -1 5 -3 11 -2 6 -3 3 2 7 -1 2 -2 2 1 5 -2 -1 -2 10 -5 9 0 1 2 4 -1 5 -4 2 1 5 -2 2 -3 8 -1 1 2 12 -3 3 -2 6 -1 2 -3 5 0 5 -3 6 1 3 -2 6 -1 0 -2 4 -3 17 -1 1 -2 6 -2 7 0 1 -2 13 -3 5 -3 11 -1 -1 -2 5 -3 7 -1 1 2 2 0 2 -3 16 -2 1 -2 4 -2 8 -1 2 -2 2 1 3 -1 1 -2 2 1 7 -1 4 -3 12 -3 2 1 1 -2 5 -2 4 0 10 -4 7 0 1 -2 10 -3 6 0 7 -3 7 -1 2 -2 2 1 1 -3 2 1 3 -2 21 -5 6 -3 7 -1 1 -2 3 1 1 -2 2 1 17 -6 11 -2 6 -3 31 -8 1 -2 2 1 15 -5 7 0 3 -3 11 -2 -31 -58 0 -2 3 -2 -5 -1 -3 -4 -25 -47 -10 1 -29 9 -3 -3 -11 3 -5 5 -10 4 -18 4 -6 3 -21 3 -7 -5 -8 -18 -14 -40 1 -3 2 -1 -1 -5 6 -5 6 -2 5 -5 34 -6 7 0 3 4 8 3 -3 2 8 -2 6 3 16 -4 6 12 33 -10 13 0 8 8 23 42 15 -40 -2 -5 0 -6 2 -2 2 1 0 -7 2 -2 48 -2 1 -1 25 0 7 -1zM504 386l3 3 4 8 1 5 17 40 1 6 -21 6 -14 2 -3 -4 -11 -30 -11 -23 0 -3 3 -2zM278 299l9 19 2 8 4 7 20 52 2 2 2 8 3 5 7 20 2 2 13 35 2 2 8 23 -4 4 -114 39 -5 0 -6 -14 -6 -20 -53 -150 0 -5 3 -2 106 -35z"],["#a09e9e","M833 646l-1 -2 -1 1 1 1 -3 3 -5 -1 3 4 6 -2zM814 626l5 -1 9 2 -1 -4 -12 0zM1108 542l14 -1 0 -1 -7 -1 3 1 -6 1 -1 -1 2 -1 -2 -1 -2 1zM1282 527l-13 5 -28 7 -6 3 -11 2 -6 3 -8 1 -19 7 -15 3 -2 2 -8 1 -3 2 -10 2 -10 4 -25 6 -2 2 -11 2 -12 5 -19 4 -15 6 -8 1 -10 -6 -2 2 -5 -1 -4 2 -2 -1 -2 3 -13 4 -7 5 -2 4 -4 2 -11 2 -13 5 -5 0 -4 2 -1 2 -3 -1 -7 2 -3 2 -3 0 -1 2 -4 -1 -2 2 -7 1 -1 2 -2 -1 -27 8 -5 3 -3 -1 -11 5 -2 -1 -11 5 -11 2 -7 3 -2 -1 -2 2 -139 40 10 24 3 10 18 -6 14 -3 20 -7 11 -2 6 -3 24 -6 20 -7 11 -2 3 -2 41 -11 6 -3 11 -2 3 -2 10 -2 24 -8 11 -2 6 -3 34 -9 6 -3 11 -2 3 -2 41 -11 6 -3 11 -2 3 -2 7 -1 23 -8 11 -2 3 -2 158 -46zM761 525l0 1 8 0 0 -1zM748 527l10 -1 0 -1 -7 0zM1137 480l0 1 8 0 0 -2zM1169 468l1 12 0 -12zM1165 454l4 10 -1 -5zM1064 453l9 1 11 -1zM1154 450l-6 -1 -1 1 -18 0 -10 2 -6 -1 -1 1 -11 0 -1 2 2 -2 17 1 2 -2 2 1 16 -1 5 6 0 3 2 2 -4 -11 1 -1 1 1zM1025 434l3 6 6 -1 1 -2 -3 -3zM1034 449l-6 -1 1 12 3 7 2 12 -3 1 -2 -3 -7 -33 -8 -26 -38 2 -1 1 -61 2 -4 -8 -1 -9 -9 -1 -8 2 2 2 -1 2 1 2 -2 2 -40 2 -2 3 7 1 2 4 -2 2 -8 -2 -1 3 4 1 3 -1 8 2 -1 -8 2 -2 17 0 1 -1 12 0 3 6 -1 2 2 4 57 -2 1 -1 48 -2 1 -1 4 1 2 5 -1 1 2 3 3 18 2 2 -1 1 18 69 -2 2 -46 2 -1 1 -4 -5 -2 -11 -21 0 -1 1 1 7 -2 2 -1 -1 -30 1 -3 -6 -6 -32 -8 0 -1 1 2 4 0 5 5 21 0 6 -2 2 -120 6 -2 -2 0 -3 2 -2 2 1 0 -5 -2 -6 -1 -14 -3 1 -2 -2 2 -4 2 1 -3 -17 -6 -49 -2 -3 -15 1 4 37 2 7 0 5 -2 2 -52 2 -3 -4 -16 0 -1 1 1 12 2 4 55 -2 1 -1 16 0 1 1 5 31 0 7 -2 2 -47 2 -1 1 3 34 2 2 22 -1 3 6 0 7 2 1 4 -1 -1 -12 2 -2 46 -2 3 5 3 21 5 0 -3 -17 0 -6 2 -2 -6 -3 -1 -10 2 -2 -2 -13 2 -2 14 0 3 6 1 -1 16 0 6 -1 1 -1 -1 -3 2 -2 18 -1 3 6 5 33 4 17 0 6 2 3 55 -2 31 -3 19 0 3 -2 -5 -21 2 -4 4 0 2 2 10 20 2 -3 5 1 13 -4 -5 -1 1 -2 -2 -1 -7 -16 -7 -11 -2 1 1 1 -1 6 -6 3 -6 -5 0 -5 -5 1 -3 -3 -3 -10 0 -5 1 -1 56 -3 1 -1 -3 -17 -2 -3 -1 -9 -4 -13 5 -3 7 0 -4 0 -5 -6 0 -3 2 -3 -3 -4 2 -9zM765 542l5 1 -1 8 3 5 -3 3 -8 -7 0 -5zM777 541l4 1 4 5 0 7 -5 4 -4 -2 1 -8 -2 -2 0 -3zM659 403l1 2 -1 3 2 2 4 0 -5 -3 3 -1 -1 -1 3 -2zM652 403l-1 6 3 2 1 -4 -1 -3zM740 310l1 13 1 0 0 -7zM565 294l-8 24 -3 4 1 4 -2 2 -4 -2 -4 -7 -3 0 -23 8 1 5 23 42 2 1 2 -1 2 2 -3 2 0 2 29 53 4 10 4 5 12 4 2 2 0 18 4 4 4 10 10 15 5 10 0 3 8 10 0 3 5 7 12 24 10 14 9 19 6 7 3 9 5 7 0 2 4 4 4 9 3 3 13 27 8 10 1 4 6 5 12 0 4 -2 12 -2 5 -3 -31 -55 -6 -13 -5 -7 -6 0 -2 -2 -4 -32 -1 -1 -7 1 -3 -3 -70 -125 2 -2 6 -1 65 -2 1 -1 58 -3 -1 -2 -10 0 -3 -3 -1 -24 -4 -27 2 -2 25 0 -1 -3 -4 -1 -7 1 -2 -2 -2 -15 3 -2 -2 0 -2 -4 5 -3 -1 -13 0 6 -2 1 1 5 -4 4 -12 -1 0 4 -2 2 -8 1 -3 -3 0 -4 -12 2 -2 3 -2 -1 0 -2 0 3 -2 2 -2 -2 -1 -5 3 -1 0 -3 2 -3 -3 -1 0 -4 -1 4 -2 -2 -1 -10 2 -8 -1 1 -16 -1 -3 3 -22 1 -13 4 -7 0 -8 -2 -43 1 -9 -9 -2 -14zM717 364l4 38 0 11 -2 2 -42 1 -1 1 -37 0 -1 1 -36 0 -3 -1 -8 -7 0 -4 -3 -7 -2 -25 2 -8 5 -3 0 -3 5 -6 3 0 3 -2 13 0 7 -4 13 0 9 -2 14 1 4 -2 9 -1 11 2 4 2 2 3 8 0 2 3 6 4 2 5z"],["#af4a4c","M873 611l-3 -1 1 -6 -2 -1 1 -3 -3 -9 -23 1 -6 7 -3 -1 -3 -4 -5 4 -3 0 -4 -4 -5 -1 -20 3 2 1 2 19 5 3 1 -1 20 0 9 -2 10 0 3 3 6 -3 17 -1zM742 589l2 36 2 4 18 0 1 1 9 -1 1 1 1 -2 11 -1 -4 -40 -26 0zM770 499l-2 -2 -6 0 -1 1 -21 0 -1 1 -46 2 -1 1 1 17 2 4 -1 4 1 1 1 -1 28 0 5 -2 7 0 3 2 4 0 8 -3 8 1 12 -1 1 2zM899 484l-69 3 0 7 4 23 33 -1 1 -1 22 0 1 1 13 -1 -1 -14zM1184 525l-4 -10 -7 -27 -3 -6 -4 -2 -48 3 0 3 -2 2 -4 -6 -7 2 -4 -1 -20 1 -1 1 -12 -1 -7 2 2 2 -3 2 2 13 3 7 3 17 2 5 4 4 31 -1 -1 -4 2 -2 3 2 0 3 5 0 2 2 2 -2 11 0 1 -2 1 1 44 -1 9 -2 -1 -1zM998 461l-3 -1 -1 1 -69 2 -1 6 8 31 -1 5 9 1 1 -1 66 -2 0 -6 -2 -1 -2 -14 -2 -5 1 -3 -3 -5zM727 448l-2 -2 -7 0 -1 1 -19 0 -1 1 -17 -1 -11 2 -16 0 -1 1 1 22 1 2 7 0 1 2 3 -2 6 0 5 -2 20 0 14 -2 15 0 4 2 0 -11zM1038 402l0 4 3 7 2 10 -1 7 4 4 4 18 5 1 31 -1 2 2 11 -1 2 -2 24 -1 -3 -3 -1 -7 -4 -10 1 -2 -2 -2 1 -2 -4 -9 -1 -7 -4 -8 -6 0 -1 2 -15 -1 -1 2 -13 0 -1 -3 -5 0 -1 2 -6 0 -1 2 -5 -1 -6 1 -1 -3zM845 389l-98 4 2 12 -1 5 2 6 97 -4 2 -1zM702 356l-4 -4 -21 0 -9 2 -14 -1 -4 1 -3 4 -4 -4 -44 2 -4 5 2 36 3 2 1 3 36 -2 1 -1 25 0 8 -2 2 2 3 0 1 -2 11 0 1 1 12 -1 0 -2 4 -3 -1 -26 -1 -1 1 -2zM695 309l2 24 15 0 1 -1 26 1 -2 -19 1 -5 -3 -2 -35 0zM669 274l-1 -1 -33 1 -3 -3 -7 0 -3 4 -5 -1 -8 2 -3 5 -10 0 -1 1 -5 -4 1 -2 -16 1 -2 3 1 22 34 -1 17 -3 3 1 2 -1 8 1 32 -1zM449 271l-9 2 -6 -5 -1 -4 -2 0 -3 2 -7 1 -2 -1 -10 3 -6 -1 -11 2 -5 5 -6 2 -5 4 3 11 5 10 0 4 3 5 2 8 2 1 2 10 5 13 7 -2 9 -5 2 -4 34 -5 5 -2 3 -5 9 -2 -2 -10 -7 -14 0 -6 -4 -2 -3 -10 -2 -2zM456 300l-2 2 -1 -1 -1 2 -4 -1 1 -3 5 -1z"],["#cfc08a","M831 618l0 2 8 -1zM1042 587l0 2 6 3 3 0 -1 -1 2 -2 -5 -3zM765 543l-3 4 0 5 7 6 2 -2 -3 -5 1 -8zM777 542l-1 1 0 3 2 2 -1 8 3 1 4 -3 0 -7 -3 -4zM692 340l2 6 1 -5zM713 339l2 5 2 -1 -1 -1 1 -1 6 3 -2 1 3 -1 1 -5 -1 -1 -10 0zM278 300l-5 0 -108 36 0 5 64 183 5 0 114 -39 3 -3 -8 -23 -2 -2 -13 -35 -2 -2 -1 -5 -9 -20 -2 -8 -2 -2 -3 -10 -6 -12 -1 -5z"],["#909395","M701 669l4 9 -2 -8zM968 617l-38 10 -3 2 -2 -1 -15 6 -10 2 -7 3 -1 -1 -3 2 -37 10 -9 4 -5 0 -5 3 -4 0 -4 2 -1 -1 -1 2 -2 -1 -2 2 -11 3 -2 -1 -1 2 -1 -1 -6 3 -8 2 -1 -1 -1 2 -2 -1 -1 2 -7 1 -2 2 76 -22 2 -2 2 1 7 -3 11 -2 11 -5 2 1 11 -5 3 1 5 -3 27 -8 2 1 1 -2 7 -1 2 -2 4 1 1 -2 3 0 3 -2 7 -2 3 1zM1002 607l-31 8 9 -1 9 -4zM1064 591l-7 1 -3 2 -4 -1 5 1zM1026 592l-1 1 -2 -3 -1 3 -7 3 11 -3zM757 584l0 2 6 -1 0 -1 -2 1zM1026 582l0 1 5 1 2 -2 -1 -1zM815 554l-1 6 2 6zM1200 551l-7 2 -2 -1 -1 2 -3 -1 -1 2 -2 0zM1106 543l1 2 10 0 4 -3 -7 1 -7 -1zM1112 538l2 1 -2 1 5 0 -3 -1 1 -1 6 0 2 2 0 -3 -6 -1zM739 530l-13 0 -13 2 -18 -1 1 1 31 0 1 -1 11 0zM771 525l-2 2 -10 -1 -7 2 -4 0 -1 -2 -4 4 29 -1zM958 513l21 0 -2 -1zM827 490l-1 2 2 6 2 19 3 1 -4 -8 0 -8 -2 -6 1 -6zM1113 479l0 2 6 -1zM652 475l3 3 6 -1 0 -2zM597 473l11 22 3 3 0 2 20 34 5 11 4 5 1 4 15 24 7 15 8 12 27 50 8 12 5 11 5 5 7 0 11 -4 9 -1 2 -2 7 -2 -1 -2 -2 0 -4 3 -4 0 -12 4 -12 0 -7 -6 -1 -4 -8 -10 -13 -27 -3 -3 -4 -9 -4 -4 0 -2 -5 -7 -3 -9 -6 -7 -9 -19 -10 -14 -12 -24 -3 -3 -2 -7 -8 -10 0 -3 -5 -10 -10 -15 -4 -10zM716 473l2 2 12 -2 -2 -1 -11 0zM1037 465l-1 6 3 4 -2 3 0 3 4 5 5 0 1 -4 -4 -1 -3 -3zM781 425l-3 -1 -3 2 -11 -1 -1 2 10 -1 7 1zM849 415l-2 0 -1 3 1 7 4 -4 -2 -1 1 -2zM655 411l5 0 0 -2 -2 -1 1 -6 9 1 0 -1 -14 1 2 4zM594 362l-1 2 -4 2 -2 8 2 25 3 7 0 4 7 6 7 1 -8 -4 -1 -10 2 -4 -3 -2zM703 357l1 5 3 1 0 -2zM689 350l-5 -3 -15 -2 -9 3 -14 -1 -9 2 -13 0 -7 4 -15 1 2 1 33 -1 1 -1 9 1 2 -2 19 1 9 -2 12 0zM696 341l1 3 3 -3 2 0zM566 292l2 4 2 14 8 8 43 -1 8 2 7 0 13 -4 22 -1 3 -3 -4 -2 0 -4 -2 2 1 2 -5 4 -11 2 -9 -1 -8 3 -8 -1 -6 -4 -11 0 -1 -1 -5 1 -14 -1 -4 2 -8 0 -4 -2 1 -2 -3 -5 -1 -19 -2 -2 -2 2zM457 273l10 17 2 10 6 11 0 5 -3 6 0 3 -6 6 7 -1 3 3 33 -10 6 0 3 4 24 -9 3 0 6 9 3 -1 -2 -7 -17 -29 -5 -11 -7 -7 -13 0 -33 10 -6 -12z"],["#868a88","M795 616l0 4 4 2 0 -2 -2 0zM792 597l1 3 2 0 1 -3zM1022 591l-7 2 -4 4 0 2 5 -5zM1033 589l-1 -2 -2 0 -6 4 1 1 3 -2 2 1zM111 574l-13 3 1 1zM160 560l-3 0 -3 2 -2 -1 0 1zM816 555l1 11 1 -6 -2 -3 1 -2zM205 547l-2 -1 -2 2 -9 2zM235 538l-12 3 4 0zM249 534l-9 2 5 0zM694 530l19 1 13 -2 13 0 1 2 4 -2 -22 0 -1 1 -24 0 -2 -1zM280 525l-8 1 -2 2 -16 4 8 -1 6 -3 8 -1zM1282 523l-2 -1 -2 2 -1 -1 -16 6 -3 -1 -1 2 -20 6 -2 -1 -1 2 -7 1 -6 3 -2 -1 -5 1 -2 2 -22 7 -38 10 -37 12 -11 2 -6 3 -21 5 -6 3 -18 4 -2 2 3 2 3 -2 3 0 -1 -1 1 -2 9 -2 1 1 -2 2 -6 1 5 0 7 -3 11 -2 0 -1 -6 1 -1 -1 2 -2 7 -2 4 2 -1 -1 1 -2 23 -7 2 1 -1 2 -18 5 19 -4 2 -2 42 -11 6 -3 3 0 1 -1 -4 1 -1 -2 6 -3 3 1 -2 2 2 1 2 -2 7 -1 4 -4 3 1 1 -2 2 1 4 -2 4 0 -3 -1 8 -4 2 2 -5 3 11 -4 -3 -1 5 -3 4 -1 2 1 -1 2 -5 1 2 1 6 -3 3 0 1 -1 -1 -2 3 -2 4 -1 2 1 -1 2 -5 1 1 1 28 -9 -1 -2 3 -2 8 -2 1 2 -5 3 4 -1 3 -2 9 -2zM1122 571l5 -3 5 1 -6 3zM1151 563l-1 2 -10 3 -4 -1 12 -5zM1164 559l-1 2 -9 3 -2 -1 1 -2 9 -3zM958 512l7 -1 14 1 -6 -1 -2 -2 1 -1 -10 0 2 3zM943 509l0 2 7 -1 -3 -2zM342 507l-4 1 -2 -1 -1 2 -3 1 -2 -1 -2 2 -8 1 -4 2zM386 494l-22 6 4 0 6 -3zM829 490l-1 6 2 6 0 8 3 5zM1072 481l0 1 7 0zM1090 480l0 1 3 0 1 2 5 -1 -1 -2zM926 478l-1 4 3 6 -1 1 1 2zM717 474l-2 -1 -2 2 -16 0 17 0 1 -1 2 1zM1099 454l-4 3 -8 -1 -2 1 6 9 4 0 3 -2zM558 444l-7 1 -11 4 -2 -1 -1 2 -31 8 -6 3 -11 2 -17 6 -2 -1 -1 2 -3 -1 -1 2 -34 9 -3 2 -2 -1 0 1 21 -5 19 -7 8 -1 6 -3 11 -2 3 -2 11 -2 6 -3 8 -1 6 -3 4 0 3 -2 4 0 6 -3 4 0 3 -2zM563 442l4 0 3 -2 5 1 -1 1 4 9 3 3 2 6 5 4 4 7 4 12 104 186 1 -1 3 2 2 10 7 12 19 -6 -14 4 -2 -1 1 -2 17 -5 1 2 4 0 -2 -2 7 -3 3 0 1 2 16 -5 10 -1 4 -4 7 -1 1 -2 2 1 1 -2 1 1 8 -2 6 -3 1 1 1 -2 2 1 11 -3 2 -2 2 1 1 -2 1 1 4 -2 4 0 5 -3 5 0 9 -4 7 -1 10 -4 20 -5 3 -2 1 1 7 -3 10 -2 15 -6 2 1 3 -2 25 -6 6 -3 9 -1 1 -2 34 -9 -1 -2 -22 6 -6 3 -4 -1 -4 3 -49 13 -6 3 -25 6 -129 38 -8 1 -8 4 -5 0 -15 5 -7 0 -6 -6 -5 -11 -8 -12 -27 -50 -3 -3 -1 -4 -4 -5 0 -2 -15 -27 -7 -10 -1 -4 -4 -5 -5 -11 -20 -34 0 -2 -3 -3 -12 -24 -5 -5 -8 -14 -1 -6 -5 -7zM1025 437l2 9 7 2 -1 -8 -5 1zM1039 429l-5 2 -1 3 3 3 -1 1 2 0 4 -4 -2 -2 2 -1zM757 425l-5 1 -1 -2 -2 0 1 6 -6 3 -4 -1 -1 2 1 1 3 -2 10 -1 0 -5zM803 422l-41 2 1 2 1 -2 11 1 3 -2 1 1 24 -1zM807 423l18 -1 -10 -1 -8 1zM842 421l-6 -1 -6 1 0 1zM1169 413l16 16 34 67 7 2 2 2 9 2 7 4 4 0 20 9 4 0 4 3 6 1 -8 -4 -8 -2 -2 -2 -8 -2 -2 -2 -3 0 -30 -12 -3 -3 -33 -65zM704 401l-1 5 2 1 0 -6zM1145 390l13 13 -4 -6zM910 374l0 1 10 3 5 3 6 1 2 2 35 13 -10 -5 -8 -2 -5 -3zM898 370l10 3 -7 -2 -2 -2zM887 366l9 3 -8 -4zM1088 362l-19 12 -2 0 -9 7 -42 17 -15 2 -8 3 -8 0 0 1 2 -1 4 1 28 -6 17 -7 1 -2 2 1 18 -8 3 0 5 -5 3 -1 3 -4 1 1 4 -2 5 -5 1 1 1 -2 1 1zM1106 360l0 1 6 1 3 -1 7 7 0 2 3 1 10 9 -20 -20zM859 354l7 4 13 4 2 2 4 0zM839 346l4 3 14 4zM695 340l16 0 2 -2 -2 1 -7 -1 -7 2 -2 -3zM726 339l11 1 3 -3 0 -2 -2 3 -2 -1 -5 1 -2 -3 -1 3zM115 321l-3 0 -1 4 19 49 1 6 2 4 2 1 6 19 3 5 0 3 7 17 0 7 -16 7 -4 0 -8 4 -22 7 -5 3 -3 0 -5 3 -22 7 0 1 5 -2 1 1 2 -2 17 -5 5 -3 6 -1 5 -3 3 0 8 -4 6 -1 7 -4 7 -1 17 -7 0 -3 -12 -30 0 -3 -3 -5 -5 -16 -5 -8 -1 -6 -10 -24 0 -3 -2 -2 -3 -9zM805 316l5 19 2 2 16 5 5 3 3 0 -22 -8 -4 -6 -1 -7zM144 314l-12 2 -2 2zM155 311l-6 1 -3 2 2 -1 1 1zM668 309l-1 -2 -4 4 -3 -1 -6 1 -4 -3 -1 3 -7 0 -5 3 -11 0 -4 -4 -11 1 11 0 6 4 8 1 8 -3 5 1 12 -1zM175 306l-10 2 2 1zM193 301l-9 2 -3 2 12 -3zM210 297l-7 1 -2 2 3 0zM230 292l-14 3 2 1zM261 284l-29 7 0 1 7 -1 6 -3 10 -1zM570 280l-1 2 3 2 0 -4zM276 280l-7 1 -6 3zM296 275l-10 2 3 1zM456 273l-2 1 0 2 5 11 0 5 3 3 2 8 2 1 6 14 -1 4 -3 -3 -9 2 2 3 4 1 -2 2 -1 5 1 1 3 -1 -1 -1 5 -4 1 -5 2 -2 1 -9 -6 -11 -2 -10zM311 271l-7 1 -2 2 3 0zM331 266l-18 4 0 1zM351 261l-11 2 -3 2zM366 257l-7 1 -2 2 6 -1zM381 253l-7 1 -6 3zM416 244l-26 6 -3 2 4 0 2 -2 3 1 11 -4 1 1zM432 240l-10 2 3 1zM451 235l-9 2 1 1 6 -1zM467 231l-7 1 -6 3 7 -1zM487 226l-18 4 0 1 12 -2zM607 210l12 14 70 42 24 16 90 0 2 2 -3 2 -4 6 0 4 2 3 1 6 2 2 0 -3 -3 -6 0 -5 7 -9 -1 -2 -92 0 -2 -3 -92 -56 -11 -13zM561 207l-31 7 -3 2 -12 2 -16 5 -4 0 -6 3 7 -1 6 -3 4 0 2 -2 3 1 16 -5 5 0 6 -3 12 -2 4 -3 3 1zM602 201l-1 1 6 6zM588 200l-25 6 4 1 6 -3 4 0 1 -2 4 1z"],["#89a058","M824 652l-6 3 -17 3 -14 5 -4 0 -6 3 -24 6 0 2 69 -19zM895 633l-18 3 -5 3 -7 1 -11 5 -9 1 -3 2 -7 0 0 2 15 -3 3 -2 7 -1 14 -5 21 -5zM915 628l-5 -1 -9 4 1 1zM922 626l11 -3 -8 0zM827 622l2 1 9 -1 -1 -1zM855 621l11 0 5 -2 -2 1 -8 -1 -1 2zM962 614l-7 1 -5 3zM991 606l-9 1 -1 2zM1009 591l-3 1 -2 6 -3 3 -7 3 1 1 10 -3zM832 590l-3 0 -2 3 -3 0 0 1 3 0zM799 591l4 2 11 0 1 -1 -3 -2 -12 0zM740 590l-2 4 0 20 1 8 4 9 0 -9 -2 -1 -1 -3 1 -3 -3 -11 0 -8 3 -2zM792 592l-5 1 -3 -4 1 5 2 2 0 6 2 3 0 25 -3 5 -33 2 -6 -1 -2 -3 -1 1 3 3 10 0 1 1 27 -2 3 -2 1 -7 3 -4 11 2 -3 0 -6 -5 0 -6 -2 -1 -2 -6 0 -8 2 -3 2 0 -3 -1zM763 586l10 0 0 -1zM106 573l-7 3 -11 2 -5 3 -5 0 -8 3 1 2 4 -1 3 -2 19 -5 1 -2 6 -1zM142 564l-9 0 -9 4 1 2 4 -2 5 0zM160 559l4 0 5 -3 -8 1zM820 554l2 10 -1 3 1 0 0 -8zM230 538l-8 1 -3 3 3 0 1 -2zM1212 542l-12 1 -4 3 -6 0 -5 2 -4 -4 0 -3 3 -4 -1 -2 -1 4 -2 1 0 5 -2 2 -71 1 -8 2 -9 -1 -20 1 -5 -2 3 3 9 1 44 -2 1 -1 35 0 1 -1 1 1 7 -1 3 3 -4 3 -9 1 -9 4 -8 1 -16 6 -22 6 -3 2 -19 4 -6 4 -5 0 -6 3 -5 -1 -7 2 -6 -5 0 4 3 0 5 3 4 0zM1276 522l-3 -2 -3 0 1 2 -7 4 1 1 6 -3 3 0zM294 519l-11 3 1 2 9 -3zM933 513l0 2 2 -1 22 0 0 -1 -2 1 -21 0zM1007 506l-3 4 -3 1 -7 0 -2 -2 -11 2 -1 2 15 -2 5 1 5 -2zM771 504l2 21 2 -10 -2 -11zM697 500l-6 1 -1 9 2 15 2 -2 -2 -4 -1 -17 2 -2zM1046 487l-3 2 2 2 3 14 3 5 0 8 2 4 1 8 7 15 3 1 -3 -6 -2 -13 -7 -23 -3 -15zM835 486l11 -1 -11 0zM1004 484l2 12 2 -5 -3 -3 1 -2zM856 485l15 -1 -15 0zM921 467l-2 5 1 13 3 6 0 7 5 12 -4 -13 0 -6 -3 -13 0 -6 3 -1 -1 -2 1 -1zM1038 459l-1 2 4 17 2 2 3 0 -3 -8 1 -1 -1 -8 -2 0zM966 461l13 -1 0 -1 -5 1 -6 -1zM728 449l2 12 0 11 1 0zM582 448l1 4 9 15 0 -3 -9 -13 2 -2zM666 447l13 0 0 -1zM713 445l0 1 12 -1 2 2 -1 -2zM682 446l8 1 14 -1 -10 -1zM1022 437l-1 1 3 9 3 1 -2 -10zM754 427l0 2 9 -1 -1 -2zM1118 425l-1 1 2 2 -1 2 6 19 2 1 8 -1 1 -7 -3 -1 -1 -4 -5 -5 -2 0zM847 427l-1 -4 -4 -1 -47 2 -14 2 61 -3 2 3zM1031 412l-4 2 2 16 3 0 -1 -4 2 -4 -2 -5zM848 399l3 18 1 -5 -2 -2 0 -8zM746 399l-3 2 -1 3 2 18 3 -2 -3 -5 0 -13zM1047 391l-19 7 3 0zM807 390l13 -1 -13 0zM777 391l20 -1 -13 0 -1 -1 -6 1zM132 365l1 5 3 4 -1 -5zM708 365l-4 -1 3 2 3 39 -8 6 -10 2 -6 -1 -4 2 -10 0 -4 -1 -1 -2 -15 1 -1 2 -8 1 -11 -1 -6 2 -21 0 2 1 31 0 1 -1 21 0 1 -1 13 0 1 1 2 -1 22 0 1 -2 3 0 3 -2 5 -9zM786 340l1 5 3 0 0 -2 -2 0zM805 325l3 11 2 0zM122 325l-4 1 1 5 0 -4zM782 308l4 30 -2 -26zM747 296l0 9 -4 5 -2 -1 2 7 1 22 1 1 2 -1 3 4 0 5 3 5 0 11 1 0 -1 -8 2 -10 -2 -3 0 -4 -2 0 -3 -4 0 -8 -2 -9 1 -10 3 -2 -1 -8zM796 292l-1 4 4 9 1 9 5 9 -5 -14 0 -6 -3 -7 0 -4zM375 287l-1 3 4 9 4 15 12 30 4 6 6 2 19 -3 6 -3 4 0 22 -7 6 -5 -3 2 -6 1 -4 3 -3 0 -2 2 -11 1 -3 3 -14 2 -12 4 -2 -1 -3 -4 -5 -16 -1 1 -2 -1 -3 -8 1 -6 -2 -6 -8 -15 1 -3 -2 -6zM724 286l35 0 1 1 32 -1 5 1 1 3 3 -3 -4 -1 -31 0 -1 1 -1 -1zM569 269l-1 7 1 3 2 0 0 -3 2 -1 -2 -1 0 -4zM435 267l5 5 1 -2 2 0zM668 259l0 3 3 3 5 40 -1 -22 -4 -17 3 -1 3 3 9 1 -14 -9zM655 250l2 2 -2 4 9 0z"],["#acadad","M823 645l1 2 5 1 3 -5 -6 0zM814 627l0 6 2 2 8 0 4 -2 0 -5 -9 -2zM807 619l-7 1 0 2 7 0zM825 619l2 2 3 -1 0 -2zM852 618l8 1 2 -2zM872 618l-1 -3 -7 1 0 1zM1021 590l-8 2 -3 4 5 -4zM1084 483l9 0 0 -1zM1125 481l6 1 5 -1 0 -1zM1102 483l6 -1 -5 -3zM1146 479l0 2 7 -1 0 -1 -4 0 -1 -2zM1051 453l0 7 3 7 2 11 2 1 -1 1 1 5 9 -1 0 -1 -7 0 -2 -2 -1 -15 -4 -9 2 -3 2 0zM666 403l-1 2 -1 -1 -1 1 1 1 -3 1 6 3 1 -6zM504 387l-33 9 0 3 11 23 1 5 12 28 5 0 29 -7 -1 -6 -13 -30 -5 -15zM739 309l-1 1 2 21 1 0 1 -7 -2 -1zM693 307l-3 15 1 8 1 1 1 -4 1 5 2 0 -2 -19 1 -5zM785 281l21 0 1 2 0 -2zM667 257l-45 1 -6 1 -1 2 -11 0 -1 -2 -30 2 -1 1 0 12 9 2 13 -1 2 2 8 0 4 -3 9 -1 5 1 3 -4 9 0 2 2 16 0 1 1 1 -1 14 0zM595 274l6 -1 1 2 -5 2z"],["#7a7e7d","M734 683l-17 5 0 1 6 -1 6 -3 5 0zM747 680l-3 0 -6 3 8 -1zM793 601l1 2 -1 3 2 2 -1 3 1 4 3 4 -3 -18zM1069 587l-3 0 -6 3zM1088 581l-9 3 9 -1zM1115 573l-21 6 -3 2 3 0 3 -2 18 -5zM1131 569l-4 0 -4 2zM1150 563l-13 4 13 -3zM1163 559l-5 1 -5 3 10 -3zM1173 556l-7 2 0 1 1 -1 4 1zM1207 546l-8 3 3 1 1 -2zM1221 542l-9 3 3 1 1 -2 5 -1zM1235 538l-5 1 -2 2 1 1 1 -2 5 -1zM1110 538l-3 0 -2 2 -1 5 2 0 -1 -2zM1269 528l-8 2 -2 2 1 1 4 -1 1 -2zM729 528l16 0 1 -1zM961 508l-5 2 1 2 6 -1zM1246 507l2 3 6 0 1 2 5 0zM972 507l1 3 7 1 0 -3 -2 1zM1057 487l-5 7 0 6 4 11 6 29 3 5 5 -5 2 -5 -3 -3 -2 -5 -3 -17 -3 -7 -2 -13zM1048 482l-1 4 3 3 0 2 0 -5zM1047 467l-2 0 -1 5 2 5zM574 441l-15 3 -23 8 -11 2 -6 3 -8 1 -6 3 -25 6 -6 3 -8 1 -19 7 -12 2 -2 2 -8 2 -2 -1 -2 2 -7 1 -19 7 -8 1 -24 8 -2 -1 -2 2 -13 3 -9 4 -25 6 -10 4 -8 1 -6 3 -10 2 -2 2 -26 6 -5 3 -9 1 -5 3 -12 2 -10 4 -2 -1 -7 4 -12 2 -6 3 -11 2 -16 6 -4 -1 -4 3 -7 1 -6 3 -5 0 -10 4 -2 -1 -8 4 -10 3 -1 -1 -10 4 -10 2 -3 2 -9 2 0 2 21 -5 37 -12 12 -2 20 -7 11 -2 16 -6 28 -7 6 -3 8 -1 6 -3 11 -2 20 -7 11 -2 16 -6 11 -2 20 -7 28 -7 6 -3 52 -14 68 -21 11 -2 6 -3 38 -10 6 -3 4 0 10 -4 11 -2 10 -4 4 0 -1 -1zM804 423l2 0 1 -2 7 0 -10 0zM824 421l5 1 1 -2 5 0 -10 0zM845 418l-3 2 1 2 3 0zM748 417l1 6 2 0 1 2 3 -1 6 1 1 -2 8 0 -6 0 -3 -2 0 -2 -7 0 -4 2zM752 422l2 -2 7 1 -1 2 -4 1zM831 415l0 1 8 1 1 -2zM1036 404l-4 8 0 5 3 13 4 -2 3 3 -2 1 2 2 -2 2 1 2 -1 10 4 15 2 -1 1 -4 3 -2 0 -3 -2 -2 -3 -17 -4 -4 1 -7 -2 -10 -2 -3 -1 -6zM1134 381l10 9 1 -1 -9 -9zM882 365l2 0 2 4 3 -2 12 8 7 -1 2 4 3 0 3 3 9 2 1 2 5 1 5 3 10 2 6 4 5 1 5 3 4 0 9 5 6 1 3 2 2 -2 3 0 -1 -1 -3 1 -1 -2 -1 1 -4 -1 -9 -6 -3 1 -34 -13 -2 -2 -6 -1 -5 -3 -10 -3 -1 -3 -4 1 -8 -4 1 -1 -3 1 -9 -4 1 -1zM1105 360l-14 0 -7 7 -1 -1 -7 6 -4 2 -1 -1 -6 6 23 -14 3 -5 1 1 13 0zM860 356l2 3 11 5 6 -1zM846 351l6 3 -1 1 4 -1 3 1 0 -1 -4 0zM755 350l-1 8 1 7 1 0zM823 342l8 3 2 4 4 0 3 2 2 -2 -3 -1 -1 -2 -5 0 -5 -3zM713 337l11 0 -1 -1zM458 321l-1 1 4 4 0 6 1 -5 2 -2 -3 0zM801 306l7 25 -4 -15 2 -1 -2 -7 -2 0zM595 198l4 2 0 3 7 7 12 16 4 0 -3 -1 -13 -15 2 -1 -2 0 -6 -7 1 -2 -2 -2z"],["#6b716b","M818 619l0 2 6 -1 0 -1zM1104 540l-5 4 -4 0 -3 -2 -2 2 -8 -1 -6 2 -3 -2 -4 3 -3 -1 -1 1 6 1 1 -1 31 -1zM1183 534l-2 0 -8 7 -5 -2 -2 2 -17 -1 -2 2 -5 0 -2 -2 -2 2 -6 0 -2 -3 -1 3 -2 1 -5 -1 -1 2 56 -2 4 -3 0 -3zM1251 511l2 2 7 1 6 4 7 1 5 4 2 -2 2 1 0 -2 -6 -1 -4 -3 -4 0 -6 -3 -7 0 -1 -2zM948 508l3 2 6 -1zM688 475l16 -1 -16 0zM668 475l16 0 -9 -1zM1045 463l-1 2 4 2 -1 14 2 1 2 4 0 9 3 -4 -2 -2 0 -6 -3 -9 1 -7 2 -1 0 -2 -6 1zM1038 437l0 5 2 3 0 -7zM156 436l-4 3 -3 0 -11 5 -7 1 -7 4 -6 1 -16 7 -6 1 -19 8 -3 0 -2 2 -1 -1 -5 2 0 3 12 -3 4 -2 1 -2 7 -3 11 -2 11 -5 4 0 2 -2 6 -1 -1 -1 9 -4 4 1 4 -3 2 1 4 -3 11 -4zM753 422l3 1 4 -2zM762 419l0 2 2 1 1 -2 9 0 0 -2zM849 412l-6 1 -4 5 -8 -1 -1 -2 -3 1 -11 0 -1 -1 -3 1 -1 2 -7 0 7 0 1 1 -1 1 -10 1 -1 -2 2 -2 -2 -1 -10 1 -2 2 -7 -2 -1 2 -3 -1 -1 4 -6 0 54 -2 -5 0 -1 -1 1 -2 10 0 1 1 -1 1 14 0 3 -2 1 -3 2 0zM790 419l8 -1 1 2 -8 1zM748 411l-1 4 2 4 3 1 1 -1 -4 -1zM669 403l-1 7 3 -2zM600 401l-2 2 1 7 1 -1 -2 -3 2 -1 -1 -1zM747 399l-1 7 2 2zM1059 383l-20 8 -2 -1 -1 2 -17 7 -27 5 -7 3 3 1 15 -4 15 -2 1 -3 8 -2 12 -6 10 -1 4 -3 1 1 1 -1 -1 -1zM903 375l3 2 3 -1zM887 369l7 3 -1 -2 -4 -2zM877 364l3 3 5 1 -1 -2zM1091 361l-1 2 3 1 1 -1 13 0 9 3 67 65 33 67 3 2 4 0 2 2 4 0 4 3 14 5 -2 -3 -8 -4 -9 -2 -11 -6 -33 -66 -25 -25 -25 -22 -9 -10 -3 -1 -1 -3 -6 -6 -3 1 -1 -1 -19 0zM854 356l7 3 -2 -3 -3 -1zM842 350l2 2 7 2 -5 -2 -1 -2zM810 338l3 3 19 7 -1 -2 -7 -2 -3 -3 -10 -4zM695 336l2 3 7 -2 7 1 2 -2 5 -1 2 1 3 -1 2 3 2 0 0 -2 -2 -1 -14 0 -2 2 -13 -2zM730 335l1 2 3 -1 4 1 1 -3zM457 324l2 2 1 7 1 0 -1 -7zM642 308l1 2 6 0 0 -2 -1 1zM617 308l-3 1 -1 -1 -4 2 6 0zM658 307l0 2 3 1 5 -2 0 -1 -5 2 -1 -2zM389 253l-6 -1 -3 3 -11 3 -2 -1 -1 2 -7 2 -6 -1 -3 3 -4 0 -6 3 -7 -1 -3 3 -7 2 -2 -1 -6 3 -3 -1 -7 4 -7 -1 -3 3 -6 2 -3 -1 -8 1 -3 3 -11 3 -2 -1 -7 4 -10 1 -6 3 -6 1 -2 -1 -2 2 -11 3 -6 -1 -3 3 -5 2 -7 -1 -3 1 -1 2 -10 3 -6 -1 -3 3 -7 2 -2 -1 -8 1 -2 3 -3 0 -3 2 -4 -1 -2 2 -12 3 -5 -1 -9 2 -2 3 4 2 5 -1 1 -2 6 -2 5 1 4 -1 1 -2 11 -3 2 1 6 -1 7 -3 13 -2 7 -3 4 0 4 -2 20 -4 7 -3 12 -2 3 -2 13 -2 23 -7 2 1 13 -5 12 -2 1 -2 7 -2 12 -1 3 -2 32 -7 3 -2 13 -2 1 -2 10 -3 4 1 0 -2zM620 227l10 5 6 6 6 2 6 4 2 3 11 5 7 6 9 4 8 5 2 3 6 2 2 3 11 5 6 5 1 -1 39 0 1 1 3 -1 48 0 -1 -1 -90 0 -65 -41 -2 0 -6 -5 -4 -1 -11 -8zM598 200l-4 -2 -12 6 -4 -1 -1 2 -4 0 -6 3 -5 -1 -1 2 -4 1 -3 -1 -4 3 -12 2 -6 3 -5 0 -16 5 -3 -1 -2 2 -4 0 -6 3 -5 1 -3 -1 -1 2 -3 0 -3 2 -10 2 -3 -1 -1 2 -3 0 -3 2 -6 1 -3 -1 -3 3 -5 1 -6 -1 -4 1 -3 3 -6 2 -7 -1 -2 3 -2 0 2 1 0 2 1 -2 4 0 4 -2 4 1 15 -5 16 -3 58 -16 5 0 34 -10 4 0 3 -2 34 -8z"],["#bcbdbd","M808 622l6 -1 3 -2 -9 0zM1032 585l-4 0 -11 4 -5 -1 -6 14 4 -3 -1 -3 4 -5 6 -2 3 1 4 -1zM1114 481l-1 1 3 5 2 -5zM586 464l7 13 -2 -6zM713 342l2 4 7 -2 -5 -2 1 1 -3 2zM743 339l-4 2 1 3 4 -1zM750 290l-1 6 2 9 -1 1 2 4 2 32 2 3 -1 4 2 5 0 11 1 1 41 -1 1 -2 -2 -16 -1 -1 -10 0 -2 -3 -1 -18 -2 -7 -1 -16 -2 -4 0 -8 -1 -1zM596 274l1 2 4 -1 0 -1zM604 259l0 1 11 0 0 -1z"],["#8ca094","M1169 480l-1 -12 2 -1 -9 -18 -8 0 2 1 -4 2 -8 -1 4 10 -1 2 -2 -1 -1 -5 -4 -5 -7 1 -11 -1 -2 2 -17 -1 -3 5 0 6 -4 3 -4 0 -3 -3 -1 -4 -3 -3 1 -3 -10 1 -17 -1 -4 2 4 10 2 16 9 1 3 -3 6 0 5 3 2 -2 4 0 1 -2 8 0 3 3 2 -4 2 2 7 1 1 -3 5 0 2 2 26 -2 2 -2 1 2 5 1 7 -1 3 2 1 -1z"],["#809653","M814 622l-15 1 1 1 11 0zM838 621l3 2 1 -1 12 0 1 -2 5 0 -12 -1zM791 599l0 8 3 6 -1 -2 1 -3 -2 -2 1 -3zM785 595l3 35 -3 3 -8 1 -31 0 1 1 19 1 1 -1 16 0 4 -2 1 -28 -2 -3zM740 595l-1 9 3 11 -1 3 2 3 -2 -26zM1179 541l-2 2 -38 1 -1 1 -17 0 -1 -1 -3 2 -49 2 2 1 18 0 1 -1 10 1 8 -2 71 -1zM904 516l-6 2 -16 0 -1 1 -4 -1 -1 1 -20 0 -1 1 -21 0 3 2 8 0 2 -2 16 0 1 -1 37 0zM933 511l1 2 21 0 1 -2 -13 1 -1 -2 -3 0 -3 2zM1005 508l-12 1 8 1zM922 472l3 25 3 11 2 2 2 -2 -3 -6 -1 -10 -2 -1 1 -3 -3 -6 1 -8 -1 -2zM1035 444l0 9 2 6 2 -1 3 4 -3 -16zM1033 423l-1 3 1 5 1 -1zM652 411l-2 -2 -7 0 -8 2 -1 -1 -16 1 -1 1 -11 -2 -1 2 -5 1 0 1 4 2 1 -1 21 0 6 -2 10 1 9 -1zM668 412l4 1 10 0 4 -2 6 1 10 -2 2 -2 -9 -1 -5 2 -2 -1 -5 1 -2 -2 -1 1 -2 -1 -3 2 -4 0zM745 402l0 13 2 3 -1 -3 1 -6 -2 -3zM757 369l7 2 11 -2 15 0zM704 365l3 16 -1 3 2 6 1 15 -3 -39zM431 343l-6 1 -3 2 -6 0 0 1 13 -2zM451 337l-11 4 -7 1 10 -1zM388 320l0 3 4 8 -2 -11zM748 307l-1 10 2 9 0 8 2 3 2 0 -2 -27 -1 -3zM668 263l6 37 -2 10 2 0 1 -2 -1 -18 -4 -25z"],["#99a77e","M862 618l4 1 4 -1 -7 -1zM694 532l1 1 11 0zM738 533l9 0 2 -2 -8 0zM758 530l1 2 9 0 -3 0 -1 -2zM596 458l0 11 -1 1 1 2zM1025 433l8 0 0 -1zM749 430l-2 -1 -8 2 -1 2 2 -2 4 1zM850 422l0 3 7 1 1 -3 -2 2 -5 -1zM729 372l2 -4 7 0 -8 0z"],["#29336c","M1106 538l-3 -2 -16 2 -9 -1 -1 1 1 2 6 1 4 -2 1 -2 4 0 1 1 -1 2 2 1zM1126 536l1 2 4 0 2 -2 -1 -1zM1155 534l1 3 5 -1 0 -2zM1144 535l1 2 7 -1 -1 -2zM1135 535l1 2 6 -1 0 -2zM1163 534l0 2 8 -1 -1 -2zM641 402l-1 -1 -33 1 -7 1 1 2 -2 2 2 2 14 1 1 -6 5 -2 1 2 -2 2 3 1 1 2 2 -3 2 0 -3 -3 5 -1 1 5 3 1 1 -6 4 0 1 4 1 0 -1 -3zM643 408l7 0 1 -5 6 -3 -14 1zM705 398l-25 1 -2 1 1 6 1 -5 3 -2 3 2 -1 3 3 0 0 -3 2 -2 4 0 1 1 -1 4 3 2 1 -3 -1 -2 2 -2 3 0 1 2 2 -1zM459 329l-1 -3 -2 -1 -6 3 -34 5 -2 4 -15 7 0 3 4 4 11 -3 2 -3 6 0 3 -2 15 -3 10 -4 8 -1zM639 301l4 2 -2 1 0 2 4 2 7 -2 8 0 1 2 2 0 6 -3 2 -6 -20 0 -1 1 -11 0zM632 299l-6 2 -43 1 -9 1 3 6 -1 2 3 1 8 0 4 -2 14 1 3 -1 -1 -5 2 -3 1 1 4 -1 5 4 4 0 3 3 5 0 0 -3 -6 -1 6 -1zM625 302l-1 3 -6 -1 1 -2 4 -1z"],["#899870","M836 651l-2 -1 0 -2 -1 3 -6 2 -2 -1 -1 2zM826 620l-3 2 -6 -1 -2 1 11 0zM994 508l-5 -1 -8 1 0 2zM651 455l0 14 1 5 1 0 -1 -19zM746 422l2 3 -2 1 3 3 -1 -8z"],["#738256","M744 631l2 2 31 0 9 -2 -13 2 -7 -1 -19 1zM834 518l0 1 21 0 -19 0zM902 516l-45 2 19 0 1 -1 4 1 1 -1zM1008 505l-6 3 -2 -1 -5 1 8 0zM663 477l7 1 1 -2 -6 -1zM133 448l-9 3 1 1zM1035 439l-1 2 4 4 -1 -6zM753 433l-12 2 10 -1 1 1zM599 413l6 -3 -4 0 -2 1zM642 409l-2 -1 -12 2 -2 -1 -10 1 1 1 1 -1zM682 407l8 1 5 -2zM1041 392l-22 8 2 1 6 -2 1 -2zM705 376l0 9 2 10 -1 1 0 11 1 0 1 -10 -3 -13 1 -2zM796 368l3 0 2 -2 -5 0zM756 366l0 2 36 0 -25 0zM1094 364l6 1 7 -1zM1092 364l-2 0 -35 22 1 1 14 -9 2 0 4 -4zM116 324l-1 3 3 9 2 2 0 3 10 24 1 6 5 8 21 59 1 0 0 -5 -2 -3 -6 -20 -5 -10 -1 -6 -7 -16 0 -3 -5 -5 -3 -14 -4 -7 -5 -17 -3 -3 1 -4zM133 321l-8 2 0 1zM153 316l-12 3 4 0zM379 295l4 9 -2 -7zM671 286l0 12 1 1 -2 5 1 5 2 -5zM756 285l9 1 1 -1 31 0 1 1 5 -1zM713 285l2 1 1 -1 3 1 3 -1 30 0zM311 276l-10 2 0 1zM384 257l-6 1 -6 3zM412 250l-25 6 5 0 3 -2zM426 246l-9 2 6 0z"],["#585957","M746 631l1 1 17 0 1 -1 8 1 9 -2 -6 1 -19 -1 -1 2zM1067 545l5 -2 -4 -1zM1075 543l1 1 6 -2 8 1 2 -2 3 2 4 0 2 -2 -5 1 -11 -1zM1123 541l4 1 2 -2 -5 -1zM1177 537l-10 2 -1 -1 -6 1 -5 -2 -3 2 -2 -1 -8 2 -5 -2 -1 2 -4 0 0 1 6 0 2 -2 2 2 5 0 2 -2 17 1 2 -2 5 2zM714 473l-1 -1 -16 0 -1 1 -20 0 0 1 11 1 1 -2 16 0 1 1zM1051 467l-1 7 3 9 0 6 2 0 2 -3 -1 -3 1 -4 -2 -1 -2 -11zM1050 457l-2 1 -2 6 5 -1zM791 419l0 1 7 0 0 -1 -5 1zM819 419l10 -1 -10 0zM792 415l-42 2 0 1 13 0 1 -1 10 0 1 1 -1 3 -9 0 4 1 7 -1 1 -4 3 1 1 -2 2 0 2 2 3 0zM842 413l-38 1 -3 1 2 2 -2 3 10 -1 -8 -1 8 -1 1 -2 3 -1 1 1 11 0zM767 367l28 1 0 -2zM652 307l2 3 3 -1 0 -2zM415 247l-2 -1 -2 2 -3 1 -1 -1 -4 2 -1 -1 -6 3 -3 -1 -6 4 22 -6 6 0z"],["#a76b58","M843 592l-2 0 -3 3 -4 -2 -4 0 -3 2 -3 0 -2 -2 -1 2 3 2 3 0 5 -4 3 4 3 1zM741 590l2 -3 13 0 -14 0zM1085 453l3 3 7 0 3 -2 -10 1zM1047 403l6 -1 5 1 1 -2 6 0 0 -1 -13 0 -5 1zM1072 402l2 -2 6 0 1 2 4 0 1 -2 15 1 1 -2 7 1 0 -1 -29 0 -8 1zM466 310l2 5 -1 2 4 4 -2 -8zM722 306l16 1 -1 -1zM610 275l-2 0 -4 5 -10 0 -2 -3 -1 1 3 3 12 -1 1 -3zM450 272l5 14 3 1 -5 -13z"],["#474570","M1071 538l5 1 -3 3 7 -1 -3 -1 -1 -2 1 -1 -4 -1zM1118 535l0 1 5 0 2 3 4 0 -3 -1 -1 -2 1 -1zM1140 538l2 1 7 -1 -4 0 -2 -2 1 -2zM1104 536l1 1 10 -1 -7 -2zM1130 533l4 3 -2 3 4 0 -2 -3 1 -2zM1184 531l-13 2 1 2 -2 2 -7 0 -1 -1 1 -3 -11 0 1 3 -2 2 4 -2 -1 -2 1 -1 6 0 1 3 -2 2 2 -1 5 1 6 -1 -1 -1 2 -3 4 0 1 2 2 -2 3 0zM931 510l5 1 7 -3 -1 -1 -10 0 1 1zM952 506l4 2 5 -1 0 -1zM1007 504l-32 1 0 2 3 1 11 -2 1 1 6 -1 6 1zM638 400l4 2 -1 1 1 5 0 -7 2 -1zM672 399l-1 -1 -13 2 0 1 10 0 2 2zM697 334l0 1 11 0 1 1 1 -2zM638 312l-3 -3 1 -4 -1 -2 2 -4 -4 0 -2 6 -5 0 5 0 1 1 -1 4 -5 0 -3 -3 -4 0 -2 -2 -5 2 -3 -4 -1 2 1 3 8 -1 1 2 4 0 4 4 11 0z"],["#7f4760","M787 628l-11 1 0 1 1 -1 10 1zM744 626l0 4 12 1 0 -1 -10 0zM1081 536l5 1 6 -1zM696 528l1 1 14 -1zM725 527l11 0 0 -1zM941 506l10 1 0 -1zM962 507l9 0 3 -2 -10 0zM710 471l4 1 11 -1zM677 399l11 -1 -11 0zM711 334l14 0 1 1 4 -1 -1 -1zM627 299l-11 1 10 0zM455 300l-1 -1 -5 1 0 2 3 0 1 -2 1 1zM418 266l-11 1 0 1zM430 264l-10 1 0 1z"],["#6a6f97","M816 553l2 2 -1 2 2 3 -1 6 2 1 1 -3 -3 -11zM791 526l1 4 4 -1 -1 -3 -2 -1zM787 497l1 3 3 -1 -2 -3z"],["#282d50","M1035 578l-2 5 0 5 2 2 4 0 4 -5 0 -5 -2 -2zM1070 542l4 -1 1 -2 -4 0zM1086 540l1 1 5 -1 1 -2 -4 0 -1 2zM1173 536l5 0 0 -2 -4 0zM635 403l0 5 6 -1 -2 -1 0 -3zM626 403l3 2 -1 2 -2 0 1 2 5 -1 -2 -1 0 -4zM621 403l-4 1 0 5 6 -1 -4 -2zM702 400l-4 1 1 6 3 -1 1 -3zM680 407l5 -2 8 1 2 -1 -2 -1 1 -4 -4 0 -2 5 -3 0 -1 -1 1 -3 -2 -1 -2 1zM672 400l-1 7 1 1 5 -1 1 -6zM611 304l1 2 4 -1 -2 -2zM624 302l-5 1 0 1 5 0zM637 300l-1 9 5 2 1 -4 -2 -1 0 -2 2 -1z"],["#b17f7c","M834 617l11 2 -1 -2zM796 598l2 19 1 2 4 0 -2 0 -3 -3zM1106 530l-1 3 2 1 1 -3zM1060 485l-2 1 1 3 3 -1 -2 -1zM1070 484l10 0 1 -1 -11 0zM1119 481l0 1 8 0zM1156 479l0 1 7 0zM1074 401l0 1 6 0 0 -1zM705 393l-3 2 0 2 3 0 1 -2zM603 355l-5 0 -4 6 5 -6zM650 353l-3 2 -3 -1 3 3zM459 293l4 11 4 5zM592 276l2 3 10 0 2 -3 -2 2 -8 0zM572 279l3 -3 5 0 -8 0zM633 271l2 2 17 0 -16 0z"],["#ed1e26","M1000 552l-3 3 0 4 3 3 4 1 3 -2 1 -6 -2 -3z"]],"field":[[167,338],[276,302],[348,482],[231,522]],"court":[[472,397],[503,388],[528,447],[497,454]],"labels":{"Q":[600,283],"R":[433,303],"O":[715,318],"N":[769,332],"P":[645,372],"M":[791,401],"D":[1084,423],"S":[402,431],"L":[686,458],"C":[1091,462],"E":[961,484],"G":[866,497],"B":[1112,507],"K":[727,510],"H":[832,602],"I":[761,606],"A":[1027,610],"J":[698,613]},"shapes":{"R":[[[448,270],[436,272],[433,265],[391,271],[375,280],[398,342],[418,331],[455,325],[464,318],[471,321]]],"Q":[[[668,272],[637,274],[624,271],[623,274],[607,275],[605,278],[595,278],[594,275],[573,276],[573,301],[670,297]]],"O":[[[737,307],[695,307],[696,333],[739,332]]],"P":[[[701,352],[594,357],[596,399],[610,401],[701,397],[705,394]]],"M":[[[844,388],[747,393],[750,416],[848,411]]],"D":[[[1109,400],[1038,401],[1049,452],[1083,452],[1092,455],[1100,451],[1123,450]]],"L":[[[726,446],[652,449],[653,473],[729,470]]],"E":[[[997,460],[924,463],[932,505],[1007,502]]],"B":[[[1184,528],[1170,481],[1058,485],[1070,536],[1181,531]]],"G":[[[899,486],[878,484],[829,487],[833,516],[903,514]]],"K":[[[768,497],[692,501],[694,527],[772,523]]],"I":[[[741,588],[745,629],[786,628],[782,587]]],"H":[[[867,591],[843,592],[840,595],[831,593],[827,596],[820,593],[796,595],[799,619],[871,615]]],"N":[[[749,290],[757,364],[799,364],[797,346],[786,346],[778,289]]],"C":[[[1050,457],[1160,450],[1170,470],[1053,484]]],"A":[[[1004,600],[1032,578],[1056,590],[1030,618]]],"J":[[[680,596],[722,590],[742,640],[700,650]]],"S":[[[167,338],[276,302],[348,482],[231,522]],[[472,397],[503,388],[528,447],[497,454]]]},"nodes":{"r_lot":[507,299],"r_pl1":[585,335],"r_pl2":[648,332],"r_pl3":[706,347],"r_str":[725,358],"r_s2":[726,398],"r_b1":[724,419],"r_b0":[653,423],"r_b00":[601,432],"rd1":[557,345],"rd2":[582,412],"rd3":[618,480],"rd4":[648,534],"rd5":[682,597],"rd6":[715,652],"rd7":[740,698],"m_w":[750,423],"c_top":[773,434],"m_e":[860,420],"t1":[904,423],"t_ne":[1010,422],"c_mid":[778,483],"c_bot":[784,534],"pk":[774,561],"ri1":[1024,470],"ri2":[1033,505],"b_ne":[1037,528],"b_g":[868,531],"b_ge":[920,539],"b_e":[967,539],"plz":[944,560],"plz_e":[1010,571],"h_j":[809,560],"i_j":[759,563],"r_c":[1036,482],"st1":[741,704],"st2":[850,669],"st3":[932,645],"st4":[1008,623],"A":[1012,599],"B":[1090,553],"C":[1046,468],"D":[1038,441],"E":[968,516],"G":[866,531],"H":[818,592],"I":[760,586],"J":[702,614],"K":[735,534],"L":[712,484],"M":[805,428],"N":[746,366],"O":[718,350],"P":[660,428],"Q":[631,318],"R":[466,322],"S":[526,428]},"edges":[["R","r_lot"],["r_lot","r_pl1"],["r_pl1","Q"],["r_pl1","r_pl2"],["r_pl2","Q"],["r_pl2","r_pl3"],["r_pl3","O"],["r_pl3","r_str"],["r_str","N"],["r_str","r_s2"],["r_s2","r_b1"],["r_b1","r_b0"],["r_b0","P"],["r_b0","r_b00"],["r_b00","rd2"],["r_pl1","rd1"],["rd1","rd2"],["rd2","rd3"],["rd3","rd4"],["rd4","rd5"],["rd5","J"],["rd5","rd6"],["rd6","rd7"],["rd2","S"],["r_b1","m_w"],["m_w","c_top"],["c_top","M"],["M","m_e"],["m_e","t1"],["t1","t_ne"],["c_top","c_mid"],["c_mid","L"],["c_mid","c_bot"],["c_bot","K"],["c_bot","pk"],["pk","i_j"],["i_j","I"],["pk","h_j"],["h_j","H"],["c_bot","b_g"],["b_g","G"],["b_g","b_ge"],["b_ge","b_e"],["b_e","E"],["b_e","plz"],["b_e","b_ne"],["b_ne","ri2"],["ri2","ri1"],["ri1","t_ne"],["ri2","r_c"],["r_c","C"],["C","D"],["b_ne","B"],["plz","plz_e"],["plz_e","A"],["A","st4"],["st4","st3"],["st3","st2"],["st2","st1"],["st1","rd7"]]};
+
+        const WORLD = { minX: 66, minY: 198, maxX: 1283, maxY: 730 };
+
+        const BUILDINGS = {
+            'A': { id: 'A', name: 'A - Pórtico y Caseta de Vigilancia', category: 'administrativos', color: '#dc2626', desc: 'Acceso principal peatonal / vehicular y Caseta de Vigilancia.' },
+            'B': { id: 'B', name: 'B - Unidad Académica Departamental', category: 'academicos', color: '#b91c1c', desc: 'Dirección, Subdirecciones, Aulas 1-9, Salas Magna 1-3 y LCAG.' },
+            'C': { id: 'C', name: 'C - Domo de la Ciencia', category: 'academicos', color: '#14b8a6', desc: 'Espacio para divulgación científica e ingenierías.' },
+            'D': { id: 'D', name: 'D - Centro de Cómputo', category: 'laboratorios', color: '#b91c1c', desc: 'Depto. Sistemas, Computación, ACS, LDS, RDS, CIM, ACL, Lab. Electrónica.' },
+            'E': { id: 'E', name: 'E - Centro de Información (Biblioteca)', category: 'academicos', color: '#b91c1c', desc: 'Biblioteca central, acervo bibliográfico y Papelería.' },
+            'G': { id: 'G', name: 'G - Sala Audiovisual', category: 'academicos', color: '#b91c1c', desc: 'Depto. Comunicación y Difusión, CESA (Sociedad de Alumnos).' },
+            'H': { id: 'H', name: 'H - Laboratorio de Métodos', category: 'laboratorios', color: '#b91c1c', desc: 'Máquinas Convencionales, CNC, Soldadura, Inyectora de Plástico.' },
+            'I': { id: 'I', name: 'I - Cafetería', category: 'deporte_cafeteria', color: '#b91c1c', desc: 'Comedor, snacks y bebidas para alumnos y personal.' },
+            'J': { id: 'J', name: 'J - Parque Vehicular', category: 'administrativos', color: '#64748b', desc: 'Área de resguardo de transporte institucional.' },
+            'K': { id: 'K', name: 'K - Edificio Administrativo', category: 'administrativos', color: '#b91c1c', desc: 'CIIE, Servicios Escolares, Recursos Financieros y Humanos.' },
+            'L': { id: 'L', name: 'L - Laboratorio de Física y Química', category: 'laboratorios', color: '#b91c1c', desc: 'Laboratorios de prácticas para Ciencias Básicas.' },
+            'M': { id: 'M', name: 'M - Edificio CEA', category: 'academicos', color: '#b91c1c', desc: 'Aulas A-D, Lab. Simulación Empresarial, Ciencias Económico Administrativas.' },
+            'N': { id: 'N', name: 'N - Purificadora y Almacenes', category: 'administrativos', color: '#94a3b8', desc: 'Mantenimiento, Equipo, Archivo Histórico, Delegación D-V-72.' },
+            'O': { id: 'O', name: 'O - Laboratorio de Ingeniería Civil', category: 'laboratorios', color: '#b91c1c', desc: 'Pruebas estructurales y ensaye de materiales de construcción.' },
+            'P': { id: 'P', name: 'P - Unidad Académica Departamental Tipo II', category: 'academicos', color: '#b91c1c', desc: 'Aulas 13-17, Salas Magna 4-5, CP-Lab, Sala Titulación, Ciencias Básicas.' },
+            'Q': { id: 'Q', name: 'Q - Unidad Multifuncional de Talleres y Lab.', category: 'laboratorios', color: '#b91c1c', desc: 'Talleres pesados y laboratorios multidisciplinarios.' },
+            'R': { id: 'R', name: 'R - Gimnasio Auditorio', category: 'deporte_cafeteria', color: '#b91c1c', desc: 'Auditorio cívico, deportivo, Depto. Actividades Extraescolares y Clubes.' },
+            'S': { id: 'S', name: 'S - Unidad Deportiva', category: 'deporte_cafeteria', color: '#15803d', desc: 'Canchas de Básquetbol y Cancha de Fútbol Profesional.' }
+        };
+
+        // Forma, letra y centro de cada edificio (tomados del croquis)
+        Object.values(BUILDINGS).forEach(b => {
+            b.shapes = CROQUIS.shapes[b.id];
+            b.label = CROQUIS.labels[b.id];
+            const pts = b.shapes.flat();
+            const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+            b.center = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2];
+            const main = b.shapes[0].map(p => p[0]), mainY = b.shapes[0].map(p => p[1]);
+            b.minDim = Math.min(Math.max(...main) - Math.min(...main), Math.max(...mainY) - Math.min(...mainY));
+        });
+
+        // Los nombres ya empiezan con "X - ". Esto evita mostrar "A - A - Pórtico".
+        const plainName = (b) => b.name.replace(/^[A-Z] - /, '');
+
+        /**
+         * RED DE ANDADORES (tomada de los andadores reales del croquis)
+         * Los nodos con letra son la puerta de cada edificio; los demás son cruces.
+         * Incluye el pasillo entre K y G que sube hacia M y el circuito de andadores
+         * que rodea el jardín central (M → D → plaza → corredor K–G).
+         */
+        const NODES = {};
+        Object.entries(CROQUIS.nodes).forEach(([k, v]) => { NODES[k] = { x: v[0], y: v[1] }; });
+        const EDGES = CROQUIS.edges;
+
+        // Lista de adyacencia (grafo no dirigido) construida desde EDGES
+        const ADJ = {};
+        EDGES.forEach(([a, b]) => {
+            if (!NODES[a] || !NODES[b]) { console.warn('Arista con nodo inexistente:', a, b); return; }
+            (ADJ[a] = ADJ[a] || []).push(b);
+            (ADJ[b] = ADJ[b] || []).push(a);
+        });
+
+        /* ================================================================
+         *  ESTADO
+         * ================================================================ */
+        let canvas, ctx, container;
+        let scale = 1, panX = 0, panY = 0;
+        let currentOriginId = 'A';
+        let currentDestinationId = null;
+        let activeRoutePath = null;
+        let activeRouteDistance = 0;
+        let activeRouteSteps = [];
+        let LAYER_PATHS = [];
+
+        // Render bajo demanda (no se redibuja 60 veces por segundo sin necesidad)
+        let needsRender = true;
+        let animUntil = 0;
+        let wasAnimating = false;
+        let viewAnim = null;
+
+        function requestRender(animMs) {
+            needsRender = true;
+            if (animMs) animUntil = Math.max(animUntil, performance.now() + animMs);
+        }
+
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+        // Al alejar el zoom, pines, letras y línea de ruta crecen para seguir siendo legibles
+        const uiK = () => clamp(0.8 / scale, 1, 2.8);
+        const routeK = () => clamp(0.6 / scale, 1, 2.2);
+
+        /* ================================================================
+         *  INICIO
+         * ================================================================ */
+        function initApp() {
+            canvas = document.getElementById('croquis-canvas');
+            ctx = canvas.getContext('2d');
+            container = document.getElementById('canvas-container');
+
+            LAYER_PATHS = CROQUIS.layers.map(l => ({ color: l[0], path: new Path2D(l[1]) }));
+
+            resizeCanvas();
+            window.addEventListener('resize', () => { resizeCanvas(); });
+            if ('ResizeObserver' in window) new ResizeObserver(resizeCanvas).observe(container);
+
+            setupCanvasInteractions();
+            populateSelectors();
+            setSidePanel(window.innerWidth >= DESKTOP_MIN_WIDTH);
+            resetMapView(false);
+            handleUrlQrParameter();
+            requestRender(6000);
+            requestAnimationFrame(frame);
+        }
+
+        function resizeCanvas() {
+            if (!container) return;
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.round(container.clientWidth * dpr);
+            canvas.height = Math.round(container.clientHeight * dpr);
+            canvas.style.width = container.clientWidth + 'px';
+            canvas.style.height = container.clientHeight + 'px';
+            requestRender();
+        }
+
+        /* ================================================================
+         *  PESTAÑA IZQUIERDA (ubicación y destino)
+         * ================================================================ */
+        function setSidePanel(open) {
+            const panel = document.getElementById('side-panel');
+            panel.classList.toggle('open', open);
+            document.getElementById('side-tab').setAttribute('aria-expanded', String(open));
+            // En celular el panel ocupa casi todo el ancho: se oculta el aviso para que no se encime
+            if (open && window.innerWidth < DESKTOP_MIN_WIDTH) {
+                clearTimeout(toastTimer);
+                document.getElementById('toast').classList.add('opacity-0', 'pointer-events-none');
+            }
+        }
+
+        function toggleSidePanel() {
+            setSidePanel(!document.getElementById('side-panel').classList.contains('open'));
+        }
+
+        // En celulares la pestaña se cierra sola al elegir, para dejar ver el mapa
+        function autoCloseSidePanelOnMobile() {
+            if (window.innerWidth < DESKTOP_MIN_WIDTH) setSidePanel(false);
+        }
+
+        // Margen izquierdo ocupado por la pestaña cuando está abierta en pantallas grandes
+        function sideInset() {
+            const panel = document.getElementById('side-panel');
+            if (!panel || !panel.classList.contains('open') || window.innerWidth < DESKTOP_MIN_WIDTH) return 0;
+            return document.getElementById('side-card').offsetWidth + 12;
+        }
+
+        /* ================================================================
+         *  VISTA (zoom / pan / encuadre)
+         * ================================================================ */
+        // Área del mapa que no tapan el encabezado ni la pestaña izquierda (cuando está abierta)
+        function getViewport() {
+            const top = 70;
+            const left = sideInset();
+            const bottom = 24;
+            return { x: left, y: top, w: Math.max(160, container.clientWidth - left), h: Math.max(120, container.clientHeight - top - bottom) };
+        }
+
+        function computeFit(minX, minY, maxX, maxY, pad, maxScale) {
+            const v = getViewport();
+            const bw = (maxX - minX) + pad * 2;
+            const bh = (maxY - minY) + pad * 2;
+            const s = clamp(Math.min(v.w / bw, v.h / bh), MIN_SCALE, maxScale);
+            return {
+                s,
+                x: v.x + v.w / 2 - ((minX + maxX) / 2) * s,
+                y: v.y + v.h / 2 - ((minY + maxY) / 2) * s
+            };
+        }
+
+        function setView(s, x, y, animate = true) {
+            if (!animate) {
+                viewAnim = null; scale = s; panX = x; panY = y; requestRender(); return;
+            }
+            viewAnim = { s0: scale, x0: panX, y0: panY, s1: s, x1: x, y1: y, t0: performance.now(), dur: 380 };
+            requestRender();
+        }
+
+        function stepViewAnim(now) {
+            if (!viewAnim) return false;
+            const k = clamp((now - viewAnim.t0) / viewAnim.dur, 0, 1);
+            const e = 1 - Math.pow(1 - k, 3);
+            scale = viewAnim.s0 + (viewAnim.s1 - viewAnim.s0) * e;
+            panX = viewAnim.x0 + (viewAnim.x1 - viewAnim.x0) * e;
+            panY = viewAnim.y0 + (viewAnim.y1 - viewAnim.y0) * e;
+            if (k >= 1) viewAnim = null;
+            return true;
+        }
+
+        function resetMapView(animate = true) {
+            const v = computeFit(WORLD.minX, WORLD.minY, WORLD.maxX, WORLD.maxY, 0, 1.8);
+            setView(v.s, v.x, v.y, animate);
+        }
+
+        function focusOn(id, targetScale, animate = true) {
+            const b = BUILDINGS[id];
+            if (!b) return;
+            const v = getViewport();
+            const s = targetScale || scale;
+            setView(s,
+                v.x + v.w / 2 - b.center[0] * s,
+                v.y + v.h / 2 - b.center[1] * s,
+                animate);
+        }
+
+        // Ajusta el zoom para que se vea TODA la ruta
+        function fitRoute() {
+            if (!activeRoutePath) return;
+            const xs = activeRoutePath.map(id => NODES[id].x);
+            const ys = activeRoutePath.map(id => NODES[id].y);
+            const v = computeFit(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), 70, 2.4);
+            setView(v.s, v.x, v.y);
+        }
+
+        function zoomAt(factor, cx, cy) {
+            viewAnim = null;
+            const ns = clamp(scale * factor, MIN_SCALE, MAX_SCALE);
+            const f = ns / scale;
+            panX = cx - (cx - panX) * f;
+            panY = cy - (cy - panY) * f;
+            scale = ns;
+            requestRender();
+        }
+
+        function zoomMap(factor) {
+            const v = getViewport();
+            zoomAt(factor, v.x + v.w / 2, v.y + v.h / 2);
+        }
+
+        /* ================================================================
+         *  INTERACCIÓN (Pointer Events: mouse + táctil unificados)
+         * ================================================================ */
+        function setupCanvasInteractions() {
+            const pointers = new Map();
+            let moved = false, downX = 0, downY = 0, lastPinchDist = 0;
+
+            container.addEventListener('pointerdown', (e) => {
+                if (e.pointerType === 'mouse' && e.button !== 0) return;
+                viewAnim = null;
+                try { container.setPointerCapture(e.pointerId); } catch (_) {}
+                pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                if (pointers.size === 1) {
+                    moved = false; downX = e.clientX; downY = e.clientY;
+                } else {
+                    moved = true; // con 2 dedos nunca es un "tap"
+                    const [p1, p2] = [...pointers.values()];
+                    lastPinchDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                }
+            });
+
+            container.addEventListener('pointermove', (e) => {
+                const prev = pointers.get(e.pointerId);
+                if (!prev) return;
+                pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                if (pointers.size === 1) {
+                    // Solo cuenta como arrastre si se movió más de 6px
+                    if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 6) moved = true;
+                    if (moved) {
+                        panX += e.clientX - prev.x;
+                        panY += e.clientY - prev.y;
+                        requestRender();
+                    }
+                } else if (pointers.size === 2) {
+                    const [p1, p2] = [...pointers.values()];
+                    const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                    const rect = container.getBoundingClientRect();
+                    const mx = (p1.x + p2.x) / 2 - rect.left;
+                    const my = (p1.y + p2.y) / 2 - rect.top;
+                    if (lastPinchDist > 0) zoomAt(dist / lastPinchDist, mx, my);
+                    lastPinchDist = dist;
+                }
+            });
+
+            const endPointer = (e) => {
+                const wasSingle = pointers.size === 1;
+                pointers.delete(e.pointerId);
+                if (pointers.size < 2) lastPinchDist = 0;
+                if (e.type === 'pointerup' && wasSingle && !moved) handleMapTap(e.clientX, e.clientY);
+            };
+            container.addEventListener('pointerup', endPointer);
+            container.addEventListener('pointercancel', endPointer);
+
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const rect = container.getBoundingClientRect();
+                zoomAt(e.deltaY < 0 ? 1.1 : 0.9, e.clientX - rect.left, e.clientY - rect.top);
+            }, { passive: false });
+        }
+
+        /* ---- Detección de toque sobre edificios con sus formas reales ---- */
+        function pointInPoly(px, py, poly) {
+            let inside = false;
+            for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+                const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+                if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+            }
+            return inside;
+        }
+
+        function distToSeg(px, py, a, b) {
+            const dx = b[0] - a[0], dy = b[1] - a[1];
+            const t = clamp(((px - a[0]) * dx + (py - a[1]) * dy) / ((dx * dx + dy * dy) || 1), 0, 1);
+            return Math.hypot(px - (a[0] + t * dx), py - (a[1] + t * dy));
+        }
+
+        function polyDist(px, py, poly) {
+            if (pointInPoly(px, py, poly)) return 0;
+            let d = Infinity;
+            for (let i = 0; i < poly.length; i++) d = Math.min(d, distToSeg(px, py, poly[i], poly[(i + 1) % poly.length]));
+            return d;
+        }
+
+        function handleMapTap(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const wx = (clientX - rect.left - panX) / scale;
+            const wy = (clientY - rect.top - panY) / scale;
+            const margin = Math.max(5, 12 / scale); // margen de toque más generoso al alejar el zoom
+
+            let best = null, bestD = Infinity;
+            for (const [id, b] of Object.entries(BUILDINGS)) {
+                for (const q of b.shapes) {
+                    const d = polyDist(wx, wy, q);
+                    if (d <= margin && d < bestD) { best = id; bestD = d; }
+                }
+            }
+            if (best) selectDestination(best);
+        }
+
+        /* ================================================================
+         *  RENDER
+         * ================================================================ */
+        function frame(now) {
+            const va = stepViewAnim(now);
+            const animating = now < animUntil;
+            if (needsRender || animating || wasAnimating || va) {
+                needsRender = false;
+                drawMap(now, animating);
+                wasAnimating = animating;
+            }
+            requestAnimationFrame(frame);
+        }
+
+        function drawMap(now, animating) {
+            const t = animating ? now : 0; // sin animación, todo queda quieto y nítido
+            const dpr = window.devicePixelRatio || 1;
+
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.translate(panX, panY);
+            ctx.scale(scale, scale);
+
+            drawCroquis();
+            drawSportsLines();
+            drawSelectedBuildings();
+            if (activeRoutePath && activeRoutePath.length > 1) drawActiveRouteLine(t);
+            drawBuildingLabels();
+            drawMarkersAndLabels(t);
+        }
+
+        /* ---- Utilidades de dibujo ---- */
+        function polyPath(q) {
+            ctx.beginPath();
+            q.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
+            ctx.closePath();
+        }
+
+        // Punto interpolado dentro de un cuadrilátero (u: izq→der, v: arriba→abajo)
+        function bil(q, u, v) {
+            const tx = q[0][0] + (q[1][0] - q[0][0]) * u, ty = q[0][1] + (q[1][1] - q[0][1]) * u;
+            const bx = q[3][0] + (q[2][0] - q[3][0]) * u, by = q[3][1] + (q[2][1] - q[3][1]) * u;
+            return [tx + (bx - tx) * v, ty + (by - ty) * v];
+        }
+
+        // Dibuja el croquis oficial: césped, andadores, calles, techos, canchas, pasillos...
+        function drawCroquis() {
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 0.8; // el trazo del mismo color cierra las costuras entre capas
+            for (const l of LAYER_PATHS) {
+                ctx.fillStyle = l.color;
+                ctx.strokeStyle = l.color;
+                ctx.fill(l.path, 'evenodd');
+                ctx.stroke(l.path);
+            }
+        }
+
+        // Líneas de la cancha de fútbol y de la cancha de usos múltiples (como en el croquis)
+        function drawSportsLines() {
+            const FIELD = CROQUIS.field, COURT = CROQUIS.court;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#27408b';
+
+            const line = (a, b) => { ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); };
+            const rect = (q, u0, v0, u1, v1) => polyPath([bil(q, u0, v0), bil(q, u1, v0), bil(q, u1, v1), bil(q, u0, v1)]);
+            const arc = (q, cu, cv, ru, rv, a0, a1) => {
+                ctx.beginPath();
+                for (let i = 0; i <= 36; i++) {
+                    const a = a0 + (a1 - a0) * i / 36;
+                    const p = bil(q, cu + Math.cos(a) * ru, cv + Math.sin(a) * rv);
+                    i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]);
+                }
+                ctx.stroke();
+            };
+
+            // Cancha de fútbol
+            polyPath(FIELD); ctx.lineWidth = 2.2; ctx.stroke();
+            ctx.lineWidth = 1.6;
+            line(bil(FIELD, 0, 0.5), bil(FIELD, 1, 0.5));
+            arc(FIELD, 0.5, 0.5, 0.17, 0.085, 0, Math.PI * 2);
+            rect(FIELD, 0.2, 0, 0.8, 0.17); ctx.stroke();
+            rect(FIELD, 0.2, 0.83, 0.8, 1); ctx.stroke();
+            rect(FIELD, 0.37, 0, 0.63, 0.06); ctx.stroke();
+            rect(FIELD, 0.37, 0.94, 0.63, 1); ctx.stroke();
+
+            // Cancha de usos múltiples
+            polyPath(COURT); ctx.lineWidth = 1.6; ctx.stroke();
+            ctx.lineWidth = 1.2;
+            line(bil(COURT, 0, 0.5), bil(COURT, 1, 0.5));
+            arc(COURT, 0.5, 0.5, 0.2, 0.09, 0, Math.PI * 2);
+            arc(COURT, 0.5, 0, 0.3, 0.14, 0, Math.PI);
+            arc(COURT, 0.5, 1, 0.3, 0.14, Math.PI, Math.PI * 2);
+        }
+
+        // Edificios de origen (verde) y destino (rojo) resaltados sobre el croquis
+        function drawSelectedBuildings() {
+            const mark = (id, fill) => {
+                const b = BUILDINGS[id];
+                if (!b) return;
+                ctx.lineJoin = 'round';
+                b.shapes.forEach(q => {
+                    polyPath(q);
+                    ctx.fillStyle = fill;
+                    ctx.fill();
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 2 / Math.max(scale, 0.5);
+                    ctx.stroke();
+                });
+            };
+            mark(currentOriginId, 'rgba(16, 185, 129, 0.55)');
+            if (currentDestinationId) mark(currentDestinationId, 'rgba(37, 99, 235, 0.6)');
+        }
+
+        // Letras de los edificios (el croquis las trae impresas; aquí se dibujan nítidas y escalables)
+        function drawBuildingLabels() {
+            const k = uiK();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineJoin = 'round';
+            for (const b of Object.values(BUILDINGS)) {
+                const base = b.id === 'S' ? 30 : 16;
+                const fs = b.id === 'S' ? base : Math.min(base * k, Math.max(base, b.minDim * 0.85));
+                ctx.font = `bold ${fs}px system-ui, sans-serif`;
+                ctx.lineWidth = fs * 0.16;
+                ctx.strokeStyle = 'rgba(15, 23, 42, 0.55)';
+                ctx.strokeText(b.id, b.label[0], b.label[1]);
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(b.id, b.label[0], b.label[1]);
+            }
+        }
+
+        function drawActiveRouteLine(t) {
+            const k = routeK();
+            ctx.beginPath();
+            activeRoutePath.forEach((id, i) => {
+                const p = NODES[id];
+                i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+            });
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            ctx.setLineDash([]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.lineWidth = 11 * k;
+            ctx.stroke();
+
+            ctx.strokeStyle = '#2563eb';
+            ctx.lineWidth = 6 * k;
+            ctx.setLineDash([12 * k, 8 * k]);
+            ctx.lineDashOffset = -t * 0.1;
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawMarkersAndLabels(t) {
+            const o = NODES[currentOriginId];
+            if (o) drawPinMarker(o.x, o.y, '#10b981', 'ESTÁS AQUÍ', currentOriginId, t);
+            if (currentDestinationId) {
+                const d = NODES[currentDestinationId];
+                if (d) drawPinMarker(d.x, d.y, '#dc2626', 'DESTINO', currentDestinationId, t);
+            }
+        }
+
+        function drawPinMarker(x, y, color, label, id, t) {
+            const k = uiK();
+            const wave = Math.sin(t * 0.004);
+            const bounce = wave * 4;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(k, k);
+
+            ctx.beginPath();
+            ctx.arc(0, 0, 14 + wave * 3, 0, Math.PI * 2);
+            ctx.fillStyle = color === '#10b981' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(220, 38, 38, 0.3)';
+            ctx.fill();
+
+            ctx.translate(0, -22 + bounce);
+
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(0, 0, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#ffffff';
+            ctx.stroke();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 11px system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(id, 0, 0);
+
+            ctx.font = 'bold 8px system-ui, sans-serif';
+            const w = ctx.measureText(label).width + 12;
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(-w / 2, -28, w, 14);
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(label, 0, -21);
+
+            ctx.restore();
+        }
+
+        /* ================================================================
+         *  RUTAS (Dijkstra sobre la red de andadores)
+         * ================================================================ */
+        function calculateDijkstraPath(startKey, destKey) {
+            const dist = {}, prev = {};
+            const unvisited = new Set(Object.keys(NODES));
+            unvisited.forEach(n => { dist[n] = Infinity; prev[n] = null; });
+            dist[startKey] = 0;
+
+            while (unvisited.size > 0) {
+                let cur = null, min = Infinity;
+                unvisited.forEach(n => { if (dist[n] < min) { min = dist[n]; cur = n; } });
+                if (cur === null || cur === destKey) break;
+                unvisited.delete(cur);
+
+                (ADJ[cur] || []).forEach(nb => {
+                    if (!unvisited.has(nb)) return;
+                    const w = Math.hypot(NODES[cur].x - NODES[nb].x, NODES[cur].y - NODES[nb].y) * METROS_POR_PIXEL;
+                    if (dist[cur] + w < dist[nb]) { dist[nb] = dist[cur] + w; prev[nb] = cur; }
+                });
+            }
+
+            if (dist[destKey] === Infinity) return null;
+            const path = [];
+            for (let c = destKey; c !== null; c = prev[c]) path.unshift(c);
+            return path[0] === startKey ? { path, distance: Math.round(dist[destKey]) } : null;
+        }
+
+        // Indicaciones paso a paso (giros calculados con el producto cruz)
+        function buildSteps(path) {
+            const pts = path.map(id => NODES[id]);
+            const steps = [];
+            const nombre = (id) => `Edificio ${id} (${plainName(BUILDINGS[id])})`;
+            const passedText = (arr) => arr.length ? ` pasando por ${arr.join(', ')}` : '';
+
+            steps.push(`Sales de ${nombre(path[0])}.`);
+            let acc = 0, passed = [];
+
+            for (let i = 0; i < pts.length - 1; i++) {
+                acc += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y) * METROS_POR_PIXEL;
+                const nextId = path[i + 1];
+                if (BUILDINGS[nextId] && i + 1 < path.length - 1) passed.push(nextId);
+
+                if (i + 2 < pts.length) {
+                    const a = { x: pts[i + 1].x - pts[i].x, y: pts[i + 1].y - pts[i].y };
+                    const b = { x: pts[i + 2].x - pts[i + 1].x, y: pts[i + 2].y - pts[i + 1].y };
+                    const ang = Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180 / Math.PI;
+                    if (Math.abs(ang) > 35) {
+                        // y crece hacia abajo: ángulo positivo = giro a la derecha
+                        steps.push(`Camina ${Math.round(acc)} m${passedText(passed)} y gira a la ${ang > 0 ? 'derecha' : 'izquierda'}.`);
+                        acc = 0; passed = [];
+                    }
+                }
+            }
+            steps.push(`Camina ${Math.round(acc)} m${passedText(passed)} hasta llegar a ${nombre(path[path.length - 1])}.`);
+            return steps;
+        }
+
+        function calculateAndDrawRoute(startId, destId) {
+            if (!startId || !destId || startId === destId) {
+                clearCurrentRoute();
+                return false;
+            }
+
+            const result = calculateDijkstraPath(startId, destId);
+            if (!result) {
+                showToast("No se pudo calcular una ruta por andadores.", "fa-triangle-exclamation");
+                return false;
+            }
+
+            activeRoutePath = result.path;
+            activeRouteDistance = result.distance;
+            activeRouteSteps = buildSteps(result.path);
+
+            const minutes = Math.max(1, Math.round(activeRouteDistance / VELOCIDAD_M_MIN));
+            document.getElementById('route-distance').innerText = `${activeRouteDistance} metros`;
+            document.getElementById('route-time').innerText = `~${minutes} min caminando`;
+
+            const ol = document.getElementById('route-steps');
+            ol.innerHTML = '';
+            activeRouteSteps.forEach(s => {
+                const li = document.createElement('li');
+                li.textContent = s;
+                ol.appendChild(li);
+            });
+
+            document.getElementById('route-summary').classList.remove('hidden');
+            playNotificationTone();
+            showToast(`Ruta activa: ${activeRouteDistance} m hacia Edificio ${destId}`, 'fa-route');
+            requestRender(12000);
+            return true;
+        }
+
+        function clearCurrentRoute() {
+            activeRoutePath = null;
+            activeRouteDistance = 0;
+            activeRouteSteps = [];
+            currentDestinationId = null;
+            document.getElementById('route-summary').classList.add('hidden');
+            document.getElementById('destination-select').value = "";
+            requestRender();
+        }
+
+        /* ================================================================
+         *  SELECTORES Y LISTAS
+         * ================================================================ */
+        function populateSelectors() {
+            const originSelect = document.getElementById('origin-select');
+            const destSelect = document.getElementById('destination-select');
+            const modalQrSelect = document.getElementById('modal-qr-point');
+
+            originSelect.innerHTML = '';
+            destSelect.innerHTML = '<option value="" disabled selected>Selecciona destino...</option>';
+            modalQrSelect.innerHTML = '';
+
+            Object.values(BUILDINGS).forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.id;
+                opt.textContent = b.name;
+                originSelect.appendChild(opt);
+
+                const destOpt = document.createElement('option');
+                destOpt.value = b.id;
+                destOpt.textContent = b.name;
+                destSelect.appendChild(destOpt);
+
+                const qrOpt = document.createElement('option');
+                qrOpt.value = b.id;
+                qrOpt.textContent = `Tótem / Lona - Edificio ${b.id}`;
+                modalQrSelect.appendChild(qrOpt);
+            });
+
+            updateOriginUi();
+            renderDestinationsList('all');
+        }
+
+        // Mantiene sincronizados el selector, el encabezado y la pestaña con el origen actual
+        function updateOriginUi() {
+            document.getElementById('origin-select').value = currentOriginId;
+            document.getElementById('origin-badge-text').innerText = BUILDINGS[currentOriginId].name;
+            document.getElementById('tab-origin').innerText = currentOriginId;
+        }
+
+        function renderDestinationsList(categoryFilter = 'all') {
+            const list = document.getElementById('quick-destinations');
+            list.innerHTML = '';
+
+            Object.values(BUILDINGS)
+                .filter(b => categoryFilter === 'all' || b.category === categoryFilter)
+                .forEach(b => {
+                    const card = document.createElement('div');
+                    card.className = "flex items-center justify-between p-2.5 rounded-2xl bg-slate-50 hover:bg-brand-50 border border-slate-200/80 cursor-pointer transition active:scale-95";
+                    card.onclick = () => selectDestination(b.id);
+
+                    card.innerHTML = `
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <div class="w-8 h-8 rounded-xl flex items-center justify-center text-white font-black text-xs shrink-0 shadow-sm" style="background-color: ${b.color};">
+                                ${b.id}
+                            </div>
+                            <div class="min-w-0">
+                                <h5 class="text-xs font-extrabold text-slate-800 truncate">${b.name}</h5>
+                                <p class="text-[10px] text-slate-400 truncate">${b.desc}</p>
+                            </div>
+                        </div>
+                        <i class="fa-solid fa-chevron-right text-[10px] text-slate-400 mr-1"></i>
+                    `;
+                    list.appendChild(card);
+                });
+        }
+
+        function filterCategory(cat, event) {
+            document.querySelectorAll('.cat-pill').forEach(btn => {
+                btn.classList.remove('bg-brand-600', 'text-white', 'shadow-sm');
+                btn.classList.add('bg-slate-100', 'text-slate-600');
+            });
+            event.currentTarget.classList.remove('bg-slate-100', 'text-slate-600');
+            event.currentTarget.classList.add('bg-brand-600', 'text-white', 'shadow-sm');
+            renderDestinationsList(cat);
+        }
+
+        function selectDestination(destId) {
+            if (!BUILDINGS[destId]) return;
+            autoCloseSidePanelOnMobile();
+
+            if (destId === currentOriginId) {
+                clearCurrentRoute();
+                showToast("Ya estás en ese edificio. Elige otro destino.", "fa-circle-info");
+                focusOn(destId, Math.max(scale, 1.4));
+                return;
+            }
+
+            currentDestinationId = destId;
+            document.getElementById('destination-select').value = destId;
+
+            if (calculateAndDrawRoute(currentOriginId, destId)) fitRoute();
+            else focusOn(destId, Math.max(scale, 1.4));
+            requestRender(6000);
+        }
+
+        function changeOriginFromSelect(originId) {
+            if (!BUILDINGS[originId]) return;
+            autoCloseSidePanelOnMobile();
+            currentOriginId = originId;
+            updateOriginUi();
+
+            if (currentDestinationId && currentDestinationId !== originId) {
+                if (calculateAndDrawRoute(currentOriginId, currentDestinationId)) fitRoute();
+            } else {
+                clearCurrentRoute();
+                focusOn(originId, Math.max(scale, 1.4));
+            }
+            requestRender(6000);
+        }
+
+        /* ================================================================
+         *  QR
+         * ================================================================ */
+        let qrInstance = null;
+
+        function isPublicUrlConfigured() {
+            return !PUBLIC_URL.includes('TU-USUARIO');
+        }
+
+        // Base del enlace. Para QR reales usa SIEMPRE PUBLIC_URL (nunca file:// ni localhost).
+        function getBaseUrl() {
+            if (isPublicUrlConfigured()) return PUBLIC_URL;
+            if (location.protocol === 'http:' || location.protocol === 'https:') {
+                return location.origin + location.pathname; // solo para pruebas
+            }
+            return PUBLIC_URL;
+        }
+
+        function getSpotUrl(id) {
+            return `${getBaseUrl()}?s=${id}`;
+        }
+
+        const QR_WARNING = 'Aún no configuras PUBLIC_URL en el código. Estos QR solo funcionarán en tu propia computadora o red, no en los celulares de los alumnos. Publica la página y cambia esa constante antes de imprimir.';
+
+        function handleUrlQrParameter() {
+            const params = new URLSearchParams(window.location.search);
+            const raw = params.get('s') || params.get('spot') || params.get('from') || params.get('edificio');
+            const origin = raw ? raw.toUpperCase() : null;
+
+            if (origin && BUILDINGS[origin]) {
+                currentOriginId = origin;
+                updateOriginUi();
+                focusOn(origin, 1.6, false); // centra el mapa en donde está el alumno
+                showToast(`¡QR escaneado! Estás en el Edificio ${origin}. Elige a dónde ir.`, 'fa-qrcode');
+            }
+
+            // Opcional: ?s=A&to=K abre directo la ruta A → K
+            const rawTo = params.get('to') || params.get('destino');
+            const dest = rawTo ? rawTo.toUpperCase() : null;
+            if (dest && BUILDINGS[dest] && dest !== currentOriginId) {
+                selectDestination(dest);
+            }
+        }
+
+        function openQrModal() {
+            document.getElementById('modal-qr-point').value = currentOriginId;
+            document.getElementById('qr-modal').classList.remove('hidden');
+            generateQrPreview();
+        }
+
+        function closeQrModal() {
+            document.getElementById('qr-modal').classList.add('hidden');
+        }
+
+        function generateQrPreview() {
+            const spotId = document.getElementById('modal-qr-point').value;
+            const spotData = BUILDINGS[spotId];
+            const fullUrl = getSpotUrl(spotId);
+
+            document.getElementById('qr-label-title').innerText = `Edificio ${spotData.id} - ${plainName(spotData)}`;
+            document.getElementById('qr-preview-url').innerText = fullUrl;
+
+            const warn = document.getElementById('qr-warning');
+            if (!isPublicUrlConfigured()) {
+                warn.innerText = QR_WARNING;
+                warn.classList.remove('hidden');
+            } else {
+                warn.classList.add('hidden');
+            }
+
+            const qrCanvas = document.getElementById('qr-canvas');
+            if (!qrInstance) {
+                qrInstance = new QRious({
+                    element: qrCanvas,
+                    size: 190,
+                    value: fullUrl,
+                    level: 'H',
+                    foreground: '#1e3a8a',
+                    background: '#ffffff'
+                });
+            } else {
+                qrInstance.value = fullUrl;
+            }
+        }
+
+        function makeQrCanvas(id, size) {
+            const c = document.createElement('canvas');
+            new QRious({ element: c, size, value: getSpotUrl(id), level: 'H', foreground: '#1e3a8a', background: '#ffffff' });
+            return c;
+        }
+
+        function wrapLines(g, text, maxW) {
+            const words = text.split(' ');
+            const lines = [];
+            let line = '';
+            for (const w of words) {
+                const test = line ? line + ' ' + w : w;
+                if (g.measureText(test).width > maxW && line) { lines.push(line); line = w; }
+                else line = test;
+            }
+            if (line) lines.push(line);
+            return lines;
+        }
+
+        // Tótem listo para imprimir: encabezado + QR grande + nombre del edificio
+        function buildTotemCanvas(id) {
+            const b = BUILDINGS[id];
+            const W = 480, H = 640;
+            const c = document.createElement('canvas');
+            c.width = W; c.height = H;
+            const g = c.getContext('2d');
+
+            g.fillStyle = '#ffffff';
+            g.fillRect(0, 0, W, H);
+
+            g.fillStyle = '#1e3a8a';
+            g.fillRect(0, 0, W, 90);
+            g.fillStyle = '#ffffff';
+            g.font = 'bold 30px system-ui, sans-serif';
+            g.textAlign = 'center';
+            g.textBaseline = 'middle';
+            g.fillText(`Estás aquí: Edificio ${id}`, W / 2, 45);
+
+            g.drawImage(makeQrCanvas(id, 360), (W - 360) / 2, 115);
+
+            g.fillStyle = '#0f172a';
+            g.font = 'bold 22px system-ui, sans-serif';
+            const lines = wrapLines(g, plainName(b), W - 60);
+            lines.forEach((l, i) => g.fillText(l, W / 2, 505 + i * 28));
+
+            g.fillStyle = '#475569';
+            g.font = '16px system-ui, sans-serif';
+            g.fillText('Escanea para ver cómo llegar a cualquier edificio', W / 2, 585);
+            g.fillStyle = '#1e3a8a';
+            g.font = 'bold 14px system-ui, sans-serif';
+            g.fillText('UbicaTec · TecNM Instituto Tecnológico de Tlaxiaco', W / 2, 612);
+
+            g.strokeStyle = '#1e3a8a';
+            g.lineWidth = 4;
+            g.strokeRect(2, 2, W - 4, H - 4);
+            return c;
+        }
+
+        function downloadQrImage() {
+            const spotId = document.getElementById('modal-qr-point').value;
+            const link = document.createElement('a');
+            link.download = `QR_UbicaTec_Edificio_${spotId}.png`;
+            link.href = buildTotemCanvas(spotId).toDataURL('image/png');
+            link.click();
+            showToast(isPublicUrlConfigured() ? "Tótem QR descargado correctamente." : "Descargado, pero falta configurar PUBLIC_URL.", isPublicUrlConfigured() ? "fa-file-arrow-down" : "fa-triangle-exclamation");
+        }
+
+        function copyQrUrl() {
+            const spotId = document.getElementById('modal-qr-point').value;
+            const fullUrl = getSpotUrl(spotId);
+            const done = () => showToast("¡Enlace copiado al portapapeles!", "fa-check");
+
+            const fallback = () => {
+                const tmp = document.createElement('input');
+                tmp.value = fullUrl;
+                document.body.appendChild(tmp);
+                tmp.select();
+                try { document.execCommand('copy'); done(); }
+                catch (_) { showToast("No se pudo copiar. Cópialo manualmente.", "fa-triangle-exclamation"); }
+                document.body.removeChild(tmp);
+            };
+
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(fullUrl).then(done).catch(fallback);
+            } else {
+                fallback();
+            }
+        }
+
+        // Hoja imprimible con todos los tótems (un QR por cada edificio del croquis)
+        function printAllQrSheet() {
+            if (!isPublicUrlConfigured() && !confirm(QR_WARNING + '\n\n¿Generar la hoja de todos modos?')) return;
+
+            const w = window.open('', '_blank');
+            if (!w) { showToast("Permite las ventanas emergentes para imprimir.", "fa-triangle-exclamation"); return; }
+
+            const cards = Object.keys(BUILDINGS).map(id =>
+                `<div class="card"><img src="${buildTotemCanvas(id).toDataURL('image/png')}" alt="QR Edificio ${id}"></div>`
+            ).join('');
+
+            w.document.write(`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Tótems QR - UbicaTec</title>
+                <style>
+                    body{margin:0;padding:12px;font-family:system-ui,sans-serif}
+                    .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+                    .card{page-break-inside:avoid;break-inside:avoid;text-align:center}
+                    img{width:100%;max-width:340px;height:auto}
+                    @media print{body{padding:0}}
+                </style></head>
+                <body><div class="grid">${cards}</div>
+                <script>window.onload=function(){setTimeout(function(){window.print()},300)}<\/script>
+                </body></html>`);
+            w.document.close();
+        }
+
+        /* ================================================================
+         *  VOZ, SONIDO Y AVISOS
+         * ================================================================ */
+        function speakDirections() {
+            if (!('speechSynthesis' in window) || !activeRouteSteps.length) return;
+            window.speechSynthesis.cancel(); // evita que se encimen audios
+            const utterance = new SpeechSynthesisUtterance(activeRouteSteps.join(' '));
+            utterance.lang = 'es-MX';
+            window.speechSynthesis.speak(utterance);
+        }
+
+        let audioCtx = null;
+        function playNotificationTone() {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                audioCtx = audioCtx || new AudioCtx(); // un solo contexto reutilizado
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(523.25, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
+
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.25);
+            } catch (e) {}
+        }
+
+        let toastTimer = null;
+        function showToast(text, icon = 'fa-circle-info') {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-msg').innerText = text;
+            document.getElementById('toast-icon').className = `fa-solid ${icon} text-brand-400`;
+
+            toast.classList.remove('opacity-0', 'pointer-events-none');
+            clearTimeout(toastTimer); // los avisos seguidos ya no se cortan entre sí
+            toastTimer = setTimeout(() => {
+                toast.classList.add('opacity-0', 'pointer-events-none');
+            }, 3600);
+        }
+
+        window.addEventListener('load', initApp);
+    </script>
+</body>
+</html>
